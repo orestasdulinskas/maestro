@@ -1,0 +1,24 @@
+{
+  "_setup": "Copy this file to config.json and fill in your real values. config.json is gitignored.",
+  "schedule": {
+    "start_hour": 8,
+    "end_hour": 20,
+    "interval_minutes": 60,
+    "eod_hour": 19,
+    "sla_seconds": 300
+  },
+  "logging": {
+    "log_file": "maestro.log",
+    "max_log_size_mb": 10
+  },
+  "monitoring": {
+    "healthcheck_url": ""
+  },
+  "model": "opus",
+  "email": {
+    "recipient": "you@example.com",
+    "subject_prefix": "[Maestro]",
+    "enabled": true
+  },
+  "_mattermost_note": "Mattermost bot credentials live in .env (gitignored), not here. See README setup for the bot creation flow and required env vars."
+}

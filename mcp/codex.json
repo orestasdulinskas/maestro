@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "Codex CLI MCP server template.",
+    "",
+    "Copy this into your codex.json (project-local) or ~/.codex/config.json (user-global)",
+    "under the `mcp` key. Codex's exact config schema may evolve; verify against",
+    "https://developers.openai.com/codex/mcp before deploying.",
+    "",
+    "Codex wraps MCP function names as `<server>.<function>` — e.g.",
+    "`pipedream.gmail-search-messages`. The function names themselves match the",
+    "Provider Adapter table in AGENTS.md."
+  ],
+  "mcp": {
+    "servers": {
+      "pipedream": {
+        "transport": "http",
+        "url": "https://mcp.pipedream.net/v2",
+        "auth": {
+          "type": "bearer",
+          "token_env": "PIPEDREAM_API_TOKEN"
+        }
+      },
+      "atlassian": {
+        "transport": "http",
+        "url": "https://mcp.atlassian.com/v1/sse",
+        "auth": {
+          "type": "oauth_static",
+          "token_env": "ATLASSIAN_OAUTH_TOKEN"
+        }
+      },
+      "aws": {
+        "transport": "stdio",
+        "command": "uvx",
+        "args": ["awslabs.mcp-aws-server@latest"],
+        "env": {
+          "AWS_REGION": "us-east-1",
+          "AWS_PROFILE": "default"
+        }
+      }
+    }
+  }
+}

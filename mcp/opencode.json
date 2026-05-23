@@ -1,0 +1,42 @@
+{
+  // opencode config template — copy into your opencode.json (project-local) or
+  // ~/.config/opencode/opencode.json (user-global). opencode reads JSONC
+  // (JSON with comments).
+  //
+  // opencode wraps MCP function names as `<server>:<function>` — e.g.
+  // `pipedream:gmail-search-messages`. The function names match the
+  // Provider Adapter table in AGENTS.md.
+  //
+  // Verify the exact schema against https://opencode.ai/docs/config/ before
+  // deploying — opencode's schema is still evolving.
+
+  "$schema": "https://opencode.ai/config.schema.json",
+
+  "mcp": {
+    "pipedream": {
+      "type": "remote",
+      "url": "https://mcp.pipedream.net/v2",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer ${env:PIPEDREAM_API_TOKEN}"
+      }
+    },
+    "atlassian": {
+      "type": "remote",
+      "url": "https://mcp.atlassian.com/v1/sse",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer ${env:ATLASSIAN_OAUTH_TOKEN}"
+      }
+    },
+    "aws": {
+      "type": "local",
+      "command": ["uvx", "awslabs.mcp-aws-server@latest"],
+      "enabled": true,
+      "environment": {
+        "AWS_REGION": "us-east-1",
+        "AWS_PROFILE": "default"
+      }
+    }
+  }
+}

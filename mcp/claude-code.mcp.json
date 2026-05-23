@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "Claude Code MCP server template. Copy to one of:",
+    "  - ~/.claude/mcp.json (user-global)",
+    "  - <repo>/.mcp.json    (project-local)",
+    "  - merged into ~/.claude/settings.json under `mcpServers`",
+    "",
+    "For Anthropic Remote Routines, MCP servers are configured at",
+    "https://claude.ai/customize/connectors — this file is for local Claude Code only.",
+    "",
+    "All HTTP MCP servers require per-account auth. The transport handles auth via",
+    "OAuth (claude.ai connector) or a service-account token (manual setup). See",
+    "providers/claude-code.md for the full bootstrap flow."
+  ],
+  "mcpServers": {
+    "pipedream": {
+      "type": "http",
+      "url": "https://mcp.pipedream.net/v2",
+      "_comment": "Gmail (read/send), Google Calendar (read), Google Drive (read). Auth is per-account via Pipedream Connect — sign in once at pipedream.com and authorize the underlying Google apps."
+    },
+    "atlassian": {
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v1/sse",
+      "_comment": "Jira + Confluence (read-only here; write tools are deny-listed in .claude/settings.json). The first call to getAccessibleAtlassianResources discovers your cloudId; cache it in state.json > cached.atlassian_cloud_id."
+    },
+    "aws": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["awslabs.mcp-aws-server@latest"],
+      "env": {
+        "AWS_REGION": "${AWS_REGION:-us-east-1}",
+        "AWS_PROFILE": "${AWS_PROFILE:-default}"
+      },
+      "_comment": "S3 (state pull/push) + Secrets Manager (runtime secrets). Uses your local AWS credentials chain (env, ~/.aws/credentials, IAM role). For Anthropic routines, connect the AWS MCP at claude.ai/customize/connectors instead; that server uses a routine-scoped IAM principal."
+    }
+  }
+}

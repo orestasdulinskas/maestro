@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "last_run": {
+    "heartbeat": {
+      "started_at": "2026-04-17T13:51:14+00:00",
+      "completed_at": "2026-04-17T13:53:28+00:00",
+      "duration_seconds": 134,
+      "exit_code": 0,
+      "prompt_hash": "fixture01"
+    },
+    "eod": {
+      "started_at": null,
+      "completed_at": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "prompt_hash": null
+    }
+  },
+  "sources": {
+    "gmail_in": {"last_success": "2026-04-17T13:51:14+00:00", "last_failure": null, "consecutive_failures": 0, "last_known_status": "healthy", "notification_pending": false, "status_changed_at": null},
+    "gmail_sent": {"last_success": "2026-04-17T13:51:14+00:00", "last_failure": null, "consecutive_failures": 0, "last_known_status": "healthy", "notification_pending": false, "status_changed_at": null},
+    "calendar": {"last_success": "2026-04-10T09:00:00+00:00", "last_failure": "2026-04-17T13:51:14+00:00", "consecutive_failures": 32, "last_known_status": "disabled", "notification_pending": true, "status_changed_at": "2026-04-15T11:00:00+00:00"},
+    "jira": {"last_success": "2026-04-17T13:51:14+00:00", "last_failure": null, "consecutive_failures": 0, "last_known_status": "healthy", "notification_pending": false, "status_changed_at": null},
+    "confluence_user": {"last_success": "2026-04-17T13:51:14+00:00", "last_failure": null, "consecutive_failures": 0, "last_known_status": "healthy", "notification_pending": false, "status_changed_at": null},
+    "confluence_team": {"last_success": "2026-04-17T13:51:14+00:00", "last_failure": null, "consecutive_failures": 0, "last_known_status": "healthy", "notification_pending": false, "status_changed_at": null},
+    "google_drive": {"last_success": null, "last_failure": "2026-04-17T13:51:14+00:00", "consecutive_failures": 95, "last_known_status": "disabled", "notification_pending": true, "status_changed_at": "2026-03-28T09:00:00+00:00"}
+  },
+  "cached": {
+    "atlassian_cloud_id": "FIXTURE-CLOUD-ID",
+    "atlassian_account_id": "FIXTURE-ACCOUNT-ID"
+  },
+  "chat": {"last_message_name": null, "last_poll_at": null},
+  "metrics": {
+    "today": {"date": "2026-04-17", "emails_sent": 2, "emails_skipped": 4, "web_searches": 0, "suggestions_made": 1, "consecutive_quiet_runs": 3},
+    "week": {"week_start": "2026-04-13", "heartbeat_runs": 32, "eod_runs": 4, "total_emails_sent": 12, "total_emails_skipped": 18, "total_web_searches": 3, "total_suggestions": 5}
+  }
+}

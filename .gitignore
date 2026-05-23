@@ -1,0 +1,51 @@
+# Maestro public template — operational state and secrets are excluded.
+# This file ships with the open-source template; running Maestro creates
+# the excluded paths locally as it generates daily logs, knowledge, and state.
+
+# Force-include files some global gitignores may exclude (AGENTS.md is a
+# project-doc convention; some user-global gitignores block it).
+!AGENTS.md
+
+# Operational state (the agent's writable surface)
+daily/
+knowledge/
+briefing.md
+feedback.md
+state.json
+
+# ...but fixtures contain copies of these files as test inputs — keep them.
+!fixtures/**
+
+# Local config & secrets
+config.json
+.env
+.env.*
+!.env.example
+.secrets/
+lib/.cognee_secrets
+
+# Runtime files (regenerable)
+memory.db
+maestro.log
+maestro.log.*.bak
+heartbeat.log
+.maestro.lock
+.tmp/
+mcp-servers.json.runtime
+
+# Cognee memory backend (regenerable; huge venv)
+.cognee_data/
+lib/cognee-venv/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local-only tooling
+bin/
+
+# User-authored workflows are private to each install; the template ships
+# only the empty starter at workflows/_template.md
+workflows/*.md
+!workflows/_template.md

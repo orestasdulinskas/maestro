@@ -1,0 +1,70 @@
+# deep-agents (LangChain/LangGraph) agent spec for Maestro.
+#
+# Reference: https://docs.langchain.com/oss/python/deepagents/overview
+#
+# deep-agents wraps MCP server tools via LangGraph's MCP integration. Function
+# names match the Provider Adapter table in AGENTS.md, but the wrapper convention
+# depends on the deep-agents version — verify with `deepagents tool list` after
+# initial config.
+#
+# This file is the deep-agents agent specification. It's typically loaded via:
+#   deepagents dev --agent-spec mcp/deep-agents.yaml
+# or copied to ./.deepagents/agent.yaml in your project.
+
+name: maestro
+description: |
+  Read-only observation and synthesis agent. Runs a periodic "heartbeat" that
+  scans Gmail, Google Calendar, Jira, Confluence, Google Drive for context the
+  user needs, then delivers an email briefing + optional Mattermost urgent ping.
+
+model: ${env:DEEPAGENTS_MODEL:-anthropic/claude-sonnet-4-6}
+
+# Project instructions are loaded from AGENTS.md at the project root (matches
+# the deep-agents AGENTS.md + SKILL.md pattern documented in MemoryMiddleware).
+project_doc: AGENTS.md
+
+# MCP servers — same logical set as Tier-1 providers.
+mcp_servers:
+  - name: pipedream
+    transport: http
+    url: https://mcp.pipedream.net/v2
+    auth:
+      type: bearer
+      token: ${env:PIPEDREAM_API_TOKEN}
+
+  - name: atlassian
+    transport: http
+    url: https://mcp.atlassian.com/v1/sse
+    auth:
+      type: bearer
+      token: ${env:ATLASSIAN_OAUTH_TOKEN}
+
+  - name: aws
+    transport: stdio
+    command: uvx
+    args:
+      - awslabs.mcp-aws-server@latest
+    env:
+      AWS_REGION: ${env:AWS_REGION:-us-east-1}
+      AWS_PROFILE: ${env:AWS_PROFILE:-default}
+
+# Allow the deep-agents built-in tools that Maestro needs.
+allowed_builtin_tools:
+  - read_file
+  - write_file
+  - edit_file
+  - ls
+  - search
+
+# Workspace persistence (deep-agents restricts writes to ./workspace/ by default).
+# Maestro's writable surface is daily/, knowledge/, briefing.md, etc. — those
+# need to be under the workspace root.
+workspace:
+  root: .
+  writable_paths:
+    - daily/
+    - knowledge/
+    - briefing.md
+    - feedback.md
+    - state.json
+    - .tmp/

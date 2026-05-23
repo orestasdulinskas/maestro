@@ -1,0 +1,126 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/providers/claude-code/hooks/check_write_path.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/providers/claude-code/hooks/check_write_path.py\""
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
+      "ToolSearch",
+      "mcp__atlassian__search",
+      "mcp__atlassian__searchJiraIssuesUsingJql",
+      "mcp__atlassian__getJiraIssue",
+      "mcp__atlassian__getConfluencePage",
+      "mcp__atlassian__getConfluenceSpaces",
+      "mcp__atlassian__getPagesInConfluenceSpace",
+      "mcp__atlassian__searchConfluenceUsingCql",
+      "mcp__atlassian__getConfluencePageDescendants",
+      "mcp__atlassian__getVisibleJiraProjects",
+      "mcp__atlassian__atlassianUserInfo",
+      "mcp__atlassian__lookupJiraAccountId",
+      "mcp__atlassian__getAccessibleAtlassianResources",
+      "mcp__atlassian__fetchAtlassian",
+      "mcp__atlassian__searchAtlassian",
+      "mcp__atlassian__getJiraIssueRemoteIssueLinks",
+      "mcp__atlassian__getJiraProjectIssueTypesMetadata",
+      "mcp__atlassian__getConfluencePageFooterComments",
+      "mcp__atlassian__getConfluencePageInlineComments",
+      "mcp__atlassian__getConfluenceCommentChildren",
+      "mcp__atlassian__getTransitionsForJiraIssue",
+      "mcp__atlassian__getJiraIssueTypeMetaWithFields",
+      "mcp__claude_ai_Gmail__gmail_search_messages",
+      "mcp__claude_ai_Gmail__gmail_read_message",
+      "mcp__claude_ai_Gmail__gmail_read_thread",
+      "mcp__claude_ai_Gmail__gmail_get_profile",
+      "mcp__claude_ai_Google_Calendar__gcal_list_events",
+      "mcp__claude_ai_Google_Calendar__gcal_get_event",
+      "mcp__claude_ai_Google_Calendar__gcal_list_calendars",
+      "mcp__claude_ai_Google_Calendar__gcal_find_my_free_time",
+      "mcp__pipedream__gmail-send-email",
+      "mcp__pipedream__google_drive-find-file",
+      "mcp__pipedream__google_drive-find-folder",
+      "mcp__pipedream__google_drive-find-spreadsheets",
+      "mcp__pipedream__google_drive-list-files",
+      "mcp__pipedream__google_drive-get-file-by-id",
+      "mcp__pipedream__google_drive-get-folder-id-for-path",
+      "mcp__pipedream__google_drive-download-file",
+      "mcp__pipedream__google_drive-search-shared-drives",
+      "mcp__pipedream__google_drive-get-shared-drive"
+    ],
+    "deny": [
+      "Bash",
+      "Agent",
+      "mcp__claude_ai_Gmail__gmail_create_draft",
+      "mcp__atlassian__createJiraIssue",
+      "mcp__atlassian__editJiraIssue",
+      "mcp__atlassian__addCommentToJiraIssue",
+      "mcp__atlassian__addWorklogToJiraIssue",
+      "mcp__atlassian__transitionJiraIssue",
+      "mcp__atlassian__createConfluencePage",
+      "mcp__atlassian__updateConfluencePage",
+      "mcp__atlassian__createConfluenceFooterComment",
+      "mcp__atlassian__createConfluenceInlineComment",
+      "mcp__atlassian__jiraWrite",
+      "mcp__claude_ai_Atlassian__createJiraIssue",
+      "mcp__claude_ai_Atlassian__editJiraIssue",
+      "mcp__claude_ai_Atlassian__addCommentToJiraIssue",
+      "mcp__claude_ai_Atlassian__addWorklogToJiraIssue",
+      "mcp__claude_ai_Atlassian__transitionJiraIssue",
+      "mcp__claude_ai_Atlassian__createConfluencePage",
+      "mcp__claude_ai_Atlassian__updateConfluencePage",
+      "mcp__claude_ai_Atlassian__createConfluenceFooterComment",
+      "mcp__claude_ai_Atlassian__createConfluenceInlineComment",
+      "mcp__claude_ai_Atlassian__jiraWrite",
+      "mcp__claude_ai_Google_Calendar__gcal_create_event",
+      "mcp__claude_ai_Google_Calendar__gcal_delete_event",
+      "mcp__claude_ai_Google_Calendar__gcal_update_event",
+      "mcp__claude_ai_Google_Calendar__gcal_respond_to_event",
+      "mcp__pipedream__google_drive-upload-file",
+      "mcp__pipedream__google_drive-create-folder",
+      "mcp__pipedream__google_drive-create-file-from-text",
+      "mcp__pipedream__google_drive-create-file-from-template",
+      "mcp__pipedream__google_drive-create-shared-drive",
+      "mcp__pipedream__google_drive-update-file",
+      "mcp__pipedream__google_drive-update-comment",
+      "mcp__pipedream__google_drive-update-reply",
+      "mcp__pipedream__google_drive-update-shared-drive",
+      "mcp__pipedream__google_drive-delete-file",
+      "mcp__pipedream__google_drive-delete-comment",
+      "mcp__pipedream__google_drive-delete-reply",
+      "mcp__pipedream__google_drive-delete-shared-drive",
+      "mcp__pipedream__google_drive-move-file",
+      "mcp__pipedream__google_drive-move-file-to-trash",
+      "mcp__pipedream__google_drive-copy-file",
+      "mcp__pipedream__google_drive-add-file-sharing-preference",
+      "mcp__pipedream__google_drive-add-comment",
+      "mcp__pipedream__google_drive-reply-to-comment",
+      "mcp__pipedream__google_drive-resolve-comment",
+      "mcp__pipedream__google_drive-remove-file-sharing-permission",
+      "mcp__pipedream__google_drive-resolve-access-proposal"
+    ]
+  }
+}
