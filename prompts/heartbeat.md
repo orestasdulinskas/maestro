@@ -169,91 +169,79 @@ Always review the existing briefing for stale time-sensitive items (e.g., "happe
 
 ## 6. Deliver Findings
 
-Read `config.json` for delivery settings. Classify each finding into one of four tiers:
+Channels split by **form factor** (see AGENTS.md → Core Principle), not urgency tier:
 
-- **urgent** — Time-critical, action needed within minutes/today. Examples:
-  - Hard deadline today the user may have forgotten
-  - Active blocker someone explicitly waiting on user
-  - Meeting starting in <30 minutes that user may not have on their radar
-  - Production incident or system failure user owns
-  - Direct @mention or DM-style email from a senior stakeholder requiring same-day reply
+- **Mattermost** is the primary channel. Every substantive finding posts as a one-line message. No cap; trust your judgment. Suppression applies (don't re-post the same entity within 6h).
+- **Gmail draft** is for long-form synthesis only — multi-paragraph reading material. Most heartbeats produce zero drafts. EOD, weekly summary, and research write-ups >200 words are the common triggers.
 
-- **high_signal** — Not time-critical but high-information-density: a tap on the shoulder you'd thank yourself for. Send when ONE of these is true and the user could plausibly NOT have noticed yet:
-  - **Decision detected**: a thread converged on a decision relevant to a tracked watchlist item, project in `knowledge/active-context.md`, or your role
-  - **Resolution detected**: someone you were waiting on (per watchlist) just acted — replied, transitioned a ticket, merged a PR, approved a change
-  - **State change on something you own**: a PR you authored merged/rejected, a Jira ticket assigned to you transitioned, a CAB RFC you submitted approved
-  - **Significant inbound from a tracked person**: someone in `knowledge/active-context.md > Tracked People` sent a substantive email (not auto-reply, not newsletter)
-  - **Watchlist item you escalated just got activity**: stale → moving
-  - **Pattern-break**: something inconsistent with a recurring pattern (a 1:1 cancelled, a weekly meeting moved, a recurring ticket type appeared in unusual volume)
+### 6a. Classify findings (worth surfacing vs. not)
 
-- **normal** — Worth knowing this run: routine Jira updates on tracked items, new emails not yet acted upon, scheduled meetings ≥30 min out, FYI from active projects. Goes to email.
+For each candidate finding from Step 2-4 (sources scanned + research), decide:
 
-- **fyi** — Background context: team activity not directly affecting user, newsletter-type content, items already deprioritized. Goes to email.
+- **Surface it (post to Mattermost)** if it meets one or more of these:
+  - Time-critical: action needed in the next few hours.
+  - Decision detected: a thread converged, a ticket transitioned, an approval came through.
+  - State change on something the user owns: PR merged/rejected, ticket assigned/transitioned, CAB approved.
+  - Significant inbound from a tracked person (substantive email, not auto-reply / newsletter).
+  - Pattern-break: something inconsistent with a recurring pattern.
+  - Watchlist item moved (stale → activity, or resolved by detected action).
+  - Suggested Jira action (one-line copy-paste-ready comment, or proposed transition with rationale).
 
-### 6a. Notification Routing
+- **Skip it** (just log to daily/, no Mattermost) if:
+  - Pure noise (newsletter, vendor auto-emails not directly relevant).
+  - Already-acted item (the user did the thing — note in daily/, don't re-surface).
+  - Duplicate of a finding already posted to Mattermost in the last 6h with no material change.
+  - Routine activity not tied to a tracked project or person.
 
-Two channels, complementary — **routing adapts to channel health**.
+When in doubt, surface it. The user can mute the channel or filter; what they can't do is conjure a missed finding.
 
-- **Email** — comprehensive briefing. Every run that has anything noteworthy.
-- **Mattermost** — "look at this now" tap, posted to the agent's configured channel. Additive on top of email, never replaces it.
+### 6b. Post each surfaced finding to Mattermost (one line each)
 
-#### Step 1 — Determine if email is available
+For every finding worth surfacing, invoke separately:
 
-Email is considered **unavailable for this run** if any of the following is true:
-- `state.json > sources.gmail_sent.last_failure` is more recent than `last_success` (or `last_success` is older than 24h while `last_failure` is recent).
-- `state.json > sources.gmail_sent.last_known_status` is `degraded` or `disabled`.
-- A previous attempt this run returned a Pipedream Connect URL or other auth-failure response instead of an actual send confirmation.
+```bash
+python3 runner/maestro.py mattermost --urgent "<one-line summary, ≤240 chars>"
+```
 
-Otherwise email is **available**.
+The runner posts inline via `lib/mattermost.py`. One finding = one runner invocation = one Mattermost line in the channel feed. Line shape patterns (see AGENTS.md → Output Formats for examples):
 
-#### Step 2 — Pick Mattermost tier threshold
+- `[<TICKET>] <what changed, why it matters>`
+- `Suggest: <action> on <TICKET> — <reason>`
+- `Decision: <one-line summary> (<who>, <when>)`
+- `Pattern: <observation>`
+- `Done: <briefing item> — <how detected>`
 
-The Mattermost-eligibility threshold depends on email health:
+**Suppression**: before invoking the runner, scan the last 6 hours of `daily/YYYY-MM-DD.md` for a `Mattermost sent:` line referencing the same ticket/thread/person. If found and the situation has not materially changed (no new state, no new actor), skip the post.
 
-| Email status | Mattermost threshold | Rationale |
-|---|---|---|
-| Available (normal) | `urgent` only | Email carries everything; Mattermost is the rare interrupt |
-| Unavailable (fallback) | `urgent` + `high_signal` | Mattermost is the only working channel; user must see high-signal items too |
+**Logging**: after each successful runner invocation (exit 0), append `Mattermost sent: <one-line summary> (<entity-id>)` to today's daily log so the next run's suppression check can find it.
 
-When in **fallback mode**, the daily log entry must include a one-line note: `Delivery: email unavailable (reason); Mattermost serving as primary channel for urgent + high_signal.`
+### 6c. Gmail draft (only if you produced long-form synthesis)
 
-#### Step 3 — Stage Mattermost lines
+Most heartbeats: skip this step entirely. The Mattermost lines ARE the delivery.
 
-For each finding that meets the threshold from Step 2, invoke `python3 runner/maestro.py mattermost --urgent "1-2 sentence summary"` (one invocation per finding). The runner stages and (depending on env) delivers the line via `lib/mattermost.py`. Do NOT call any Mattermost HTTP endpoint or MCP tool directly.
+Create a Gmail draft only when you have multi-paragraph synthesis worth reading as a document:
+- A research write-up gathered via WebSearch/WebFetch that exceeds ~200 words.
+- A full meeting-notes block (attendees + topics + decisions + follow-ups) that doesn't compress to a single line.
+- The user explicitly asked (via feedback.md or an email reply) for an emailed digest this run.
 
-**Cap**: at most **2 lines** in normal mode, **4 lines** in fallback mode. The runner enforces this and refuses additional lines past the cap. If more findings qualify, pick the most actionable; the rest stay in the email body's URGENT / Needs-Attention sections (so they're not lost when email recovers and the run is back-filled into Maestro's daily-log audit trail). Each line ≤ 240 chars, name the entity (ticket ID, person).
+To create the draft:
 
-**Suppression**: do NOT re-message the same finding to Mattermost twice. Before invoking the runner, scan the last 6 hours of `daily/YYYY-MM-DD.md` for a `Mattermost sent:` line referencing the same ticket/thread/person. If found and the situation has not materially changed (no new state, no new actor), keep the item in the email body but do not re-message Mattermost.
-
-#### Step 4 — Email body structure (when email IS available)
-
-The four tiers still drive the email body shape:
-- **urgent** → put first, prefix the email subject with `URGENT — `.
-- **high_signal** → top section ("Needs Attention").
-- **normal** → middle sections (per AGENTS.md email format).
-- **fyi** → "FYI" tail section, condensed.
-
-If the only findings are `fyi`, do not send an email (per the "only email when noteworthy" rule below) and do not write the Mattermost file. If sources are degraded, always email regardless.
-
-**Logging**: For every Mattermost line you stage via the runner, append a `Mattermost sent: <summary> (<ticket/entity-id>)` line to today's `daily/YYYY-MM-DD.md` so the next run's suppression check can find it. (Even though the runner does the actual API call, the agent owns the decision and the log entry.)
-
-### 6b. Email Delivery
-
-Stage the email payload via `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner reads the recipient from `config.json > email.recipient`, validates it, and emits the staged payload to stdout (and `.tmp/maestro-outgoing-email.json`).
-
-Then deliver using your runtime's Gmail capability. **Default mode is draft** (the user reviews and clicks Send):
-- **Draft mode (default)**: call the `gmail_create_draft` tool with the recipient/subject/body **exactly** as the runner returned them. The draft appears in the user's Gmail; they get a review step before anything goes out.
-- **Direct-send mode (opt-in)**: only if the user has explicitly wired Pipedream's `gmail-send-email` and accepted the no-review trade-off, call that instead with the same staged payload.
+1. Stage the payload: `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner pulls the recipient from `config.json > email.recipient`, validates it, prints a JSON payload.
+2. Call your runtime's `gmail_create_draft` tool with the recipient/subject/body **exactly as the runner returned them** — do not paraphrase, do not change the recipient.
+3. Post one Mattermost line announcing the draft: `Draft ready: <subject> — <one-line teaser of the headline content>.`
 
 Defense in depth:
-- The runner is the source of truth for the recipient. **Do not** pass a recipient to the Gmail call yourself — copy it from the runner's staged output.
+- The runner is the source of truth for the recipient. Never pass a recipient yourself.
 - No CC, no BCC, no other recipients. Ever.
-- Subject: `[Heartbeat] HH:MM — <one-line summary of key finding>`
-- Body: A concise version of your findings — not the full daily log, but the actionable highlights. Write it as if texting a busy person: what matters, what they should do, what's coming up.
-- Include any suggestions, research, or drafted content (see AGENTS.md for email format sections: Suggested Jira Actions, Meeting Notes, Decision Detected, Research).
-- If nothing noteworthy was found, do NOT send an email. Only email when there's something worth the user's attention.
-  - **Exception**: If the Run Context lists **degraded sources**, always send an email with a short warning section even if nothing else is noteworthy.
-- Use plain text — no HTML.
+- Use plain text or light markdown in the body — no HTML.
+
+### 6d. Graceful degradation
+
+If Mattermost delivery fails (runner exits non-zero with HTTP error), the runner preserves the unsent line in `.tmp/mattermost_urgent.txt`. Note the failure in the daily log: `Mattermost delivery failed (<reason>); finding preserved in .tmp/ for next-run retry: <summary>`. Do not re-attempt within this run.
+
+If Gmail-draft creation fails (`gmail_create_draft` errors), fall back to a multi-line Mattermost post prefixed with `[<EOD/Weekly/Research> <date>]`. Note the fallback in the daily log.
+
+If both channels are degraded, write the full content to `daily/YYYY-MM-DD.md` under a `### Undelivered content` section. The user can read it there.
 
 ## 7. Update state.json
 
@@ -261,8 +249,8 @@ After checking all data sources, update `state.json` to record source health and
 
 - **Source health**: For each source you checked successfully, set `sources.<name>.last_success` to the current ISO timestamp and `consecutive_failures` to `0`. For sources that failed, set `sources.<name>.last_failure` to the current timestamp and increment `consecutive_failures` by 1.
 - **Cached identifiers**: If you successfully resolved an Atlassian `cloudId` or `accountId`, store it in `cached.atlassian_cloud_id` / `cached.atlassian_account_id` so future runs can use it as a fallback.
-- **Metrics**: Increment `metrics.today.emails_sent` or `metrics.today.emails_skipped` based on whether you sent an email. Increment `metrics.today.web_searches` for each web search performed. Increment `metrics.today.suggestions_made` for each Jira comment or transition suggested. Increment `metrics.today.mattermost_messages_sent` by the number of lines you staged via `python3 runner/maestro.py mattermost --urgent` (note: this counts your intent, not the runner's send result — if a send fails, the runner logs but does not re-decrement). Also update the corresponding `metrics.week.total_*` counters.
-- **Quiet-run tracking**: If this was a quiet run (no findings, no email sent), increment `metrics.today.consecutive_quiet_runs`. If you found something noteworthy or sent an email, reset it to `0`.
+- **Metrics**: Increment `metrics.today.emails_sent` by 1 if you created a Gmail draft this run (form-factor routing means most heartbeats skip this — only long-form synthesis triggers a draft). Otherwise increment `metrics.today.emails_skipped`. Increment `metrics.today.web_searches` for each web search performed. Increment `metrics.today.suggestions_made` for each Jira comment or transition suggested. Increment `metrics.today.mattermost_messages_sent` by the number of lines you posted via `python3 runner/maestro.py mattermost --urgent` (one increment per successful runner exit-0 invocation). Also update the corresponding `metrics.week.total_*` counters.
+- **Quiet-run tracking**: If this was a quiet run (no findings posted to Mattermost AND no Gmail draft created), increment `metrics.today.consecutive_quiet_runs`. If you posted anything, reset it to `0`.
 - **Metrics date rollover**: If `metrics.today.date` does not match today's date, reset all `metrics.today` counters to 0 and set `metrics.today.date` to today. Similarly, if `metrics.week.week_start` does not match the current Monday, reset weekly counters.
 
 Do not modify `last_run` fields — those are managed by `run.sh`.

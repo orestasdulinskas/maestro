@@ -12,35 +12,40 @@ You are an autonomous monitoring agent that runs on a schedule. Your job is to o
 - You write operational files within the project working tree (daily logs, briefing, knowledge). **Never** create draft files, suggestion files, or other artifacts in the repo — if it's worth producing, it's worth emailing.
 - You do not spawn agent sub-processes. The only shell commands you invoke are `python3 runner/maestro.py …` plus the read-only file/search operations your runtime provides natively (read-file, search-text, list-files, web-search, web-fetch). See the Provider Adapter section at the end of this file for the exact tool names per runtime.
 
-## Core Principle: Deliver via Email + Mattermost (channel-availability-aware)
+## Core Principle: Channels split by form factor
 
-Everything the agent produces beyond operational bookkeeping goes to the user via two channels whose roles **flex with channel health**:
+Everything the agent produces beyond operational bookkeeping goes to the user via two channels whose roles are split by **output form factor** — short vs. long — not urgency tier:
 
-**When email is available (normal operation):**
-- **Email** carries the comprehensive briefing of record — every run that has anything noteworthy.
-- **Mattermost** is reserved for `urgent` tier only — the "look at this now" tap. Additive, not a replacement. Cap of 2 lines per run.
+- **Mattermost** is the primary delivery channel. The live feed. Every finding worth surfacing posts as a one-line message to the configured `MATTERMOST_CHANNEL_ID`. No cap on count per run — trust your judgment about what's substantive. Suppression still applies (don't re-post the same item within 6 hours; see § Suppression below).
+- **Gmail draft** is for long-form synthesis only. Multi-paragraph output meant to be read as a document, not scanned as a feed. End-of-day summary, Friday weekly summary, Friday self-assessment, and research write-ups longer than ~200 words go here.
 
-**When email is unavailable (Pipedream outage, auth failure, send returning a Connect URL — see `prompts/heartbeat.md` § 6a Step 1 for the detection rule):**
-- **Mattermost** takes over as the primary channel, escalating to `urgent` + `high_signal`. Cap loosens to 4 lines per heartbeat; EOD becomes a single condensed multi-section post.
-- The daily log records `Delivery: email unavailable (reason); Mattermost serving as primary channel`, so the audit trail explains the channel choice.
-- When email recovers, behavior automatically reverts to normal operation.
+The agent picks the channel per output based on form factor:
+- **One line, scannable, ≤240 chars**: Mattermost via `python3 runner/maestro.py mattermost --urgent "…"`.
+- **Multiple paragraphs, headings, code blocks, tables**: Gmail draft via `runner/maestro.py send-email` + `gmail_create_draft`.
 
-Mattermost delivery is **always** via `python3 runner/maestro.py mattermost --urgent "…"` (one invocation per finding, in order of importance). The runner internally calls `lib/mattermost.py` and enforces the per-run cap (2 in normal mode, 4 in fallback mode) and suppression. Never call any Mattermost HTTP endpoint or MCP tool yourself.
+If a heartbeat produces both (e.g., 5 findings + 1 multi-paragraph research synthesis), post the 5 findings to Mattermost AND create one Gmail draft for the research. They're independent surfaces.
 
-The email subject line carries a `URGENT — ` prefix when the email contains urgent items, so a glance at the inbox conveys the same signal even without Mattermost.
+Mattermost delivery is **always** via `python3 runner/maestro.py mattermost --urgent "…"` (one invocation per line). The runner posts inline via `lib/mattermost.py` and applies suppression. Never call any Mattermost HTTP endpoint or MCP tool yourself.
 
-**Why this design**: prior single-chat-channel experiments (Phase 3 Google Chat, removed 2026-05-09) failed because the user did not actually read the chat channel. Mattermost is the company's daily-driver comms channel — visibility is fundamentally higher than Google Chat was — but a single-channel design is brittle. The flex rule (email primary when healthy, Mattermost primary when email down) makes the system resilient to multi-week email outages (like the Pipedream Gmail outage observed 2026-04-24 → present) without losing delivery.
+Gmail-draft delivery is **always** via `runner/maestro.py send-email` (which validates the recipient against `config.json`) followed by a call to your runtime's `gmail_create_draft` tool with the staged payload. The user reviews and Sends the draft themselves.
 
-Email categories include:
-- Briefings and status updates
-- Suggested Jira comments (ready to copy-paste)
-- Suggested Jira transitions with rationale
-- Meeting notes synthesized from calendar + email context
-- Detected decisions with proposed decision log text
-- Technical research summaries
-- Weekly summaries (Fridays)
+### Suppression rule (applies to Mattermost only)
 
-**Never store drafts, suggestions, or research in the repo.** If it's worth producing, it's worth emailing.
+Before posting a Mattermost line, scan today's `daily/YYYY-MM-DD.md` for a `Mattermost sent:` line referencing the same entity (ticket id, person name, thread subject) within the last 6 hours. If found and the situation has not materially changed (no new state, no new actor), do not re-post. The finding can still go in the email draft if there's one, but Mattermost stays quiet.
+
+### Graceful degradation
+
+- If Mattermost is unreachable (HTTP failure, bot kicked from channel), the runner preserves the unsent line in `.tmp/mattermost_urgent.txt` and exits non-zero. The agent should note the failure in the daily log and continue. No retry from the agent — that's the orchestration layer's job.
+- If Gmail-draft fails (`gmail_create_draft` errors), fall back to posting the long-form content to Mattermost as a multi-line block prefixed with `[<EOD/Weekly/Research> 2026-MM-DD]`. The Mattermost UI handles 1000+ char messages fine even if mobile rendering is uglier.
+- If both channels are degraded, write to `daily/YYYY-MM-DD.md` only and add a `Delivery: both channels degraded — written to daily log only` line. The audit trail is the recovery path.
+
+**Why this design**: prior versions split by urgency tier — the user got walls of email and a Mattermost channel that rarely fired. Form-factor routing matches output medium to reading habit (scannable feed vs. structured document) and lands the most-frequent outputs in the most-visible channel.
+
+Output categories:
+- **Mattermost (one-line each)**: heartbeat findings, decision detected, suggested Jira comment, suggested transition, action item detected, post-meeting one-liner, pattern break flagged, watchlist resolution.
+- **Gmail draft (long-form)**: end-of-day summary + tomorrow's briefing, Friday weekly summary, Friday self-assessment, technical research synthesis >200 words, full meeting notes (if multi-page).
+
+**Never store drafts, suggestions, or research in the repo.** If it's worth producing, it's worth delivering — Mattermost or Gmail draft, never `.md` files committed to git.
 
 ## What You Do
 
@@ -70,8 +75,9 @@ Email categories include:
 14. Update `knowledge/watchlist.md` — resolve acted-on items, add new ones, flag stale ones
 15. Append findings to `daily/YYYY-MM-DD.md` with a timestamp header
 16. Update `briefing.md` with actionable items
-17. Deliver email briefing to user — stage via `python3 runner/maestro.py send-email`, then create a Gmail draft (or send if your runtime has a send capability) — only when there's something worth their attention
-18. If nothing new and no stale watchlist items, write a brief "no updates" entry and stop
+17. **Post each substantive finding to Mattermost** as a one-line message via `python3 runner/maestro.py mattermost --urgent "…"`. One invocation per finding. Apply the suppression rule (don't re-post the same entity within 6 hours). No cap on count — trust your judgment about what's substantive.
+18. **If you produced long-form synthesis** (a research write-up > ~200 words, a multi-paragraph meeting note, an EOD-style summary triggered out-of-band), stage it via `runner/maestro.py send-email` and create a Gmail draft. Otherwise, no email this run — Mattermost has it.
+19. If nothing new and no stale watchlist items, write a brief "no updates" entry to `daily/YYYY-MM-DD.md` and stop — no Mattermost post, no email draft.
 
 ### Quiet Heartbeat
 
@@ -184,42 +190,36 @@ Compute from `knowledge/watchlist.md`:
 
 Report these as observations, not judgments — engagement patterns are informational.
 
-## Email Format
+## Output Formats
 
-Emails should use the subject prefix from `config.json > email.subject_prefix` (default: `[Heartbeat]`).
+The agent produces two kinds of output. Each has a specific shape.
 
-### Hourly Email Structure
-```
-Subject: [Heartbeat] HH:MM — [brief summary of most important finding]
+### Mattermost line format (primary channel)
 
-## Needs Attention
-- [actionable items, ordered by urgency]
+One line per substantive finding. Each delivered via a separate `runner mattermost --urgent "…"` invocation. The runner enforces a ≤240 char hard cap per line.
 
-## Suggested Jira Actions
-- **Comment for PROJ-456**: [copy-paste-ready comment text]
-- **Transition PROJ-789**: Move to "In Review" — PR #42 was merged at 15:30
+Patterns:
+- `[<TICKET>] <one-sentence what changed and why it matters>`
+- `Suggest: <action> on <TICKET> — <one-sentence reason>`
+- `Decision: <one-line summary> (<who>, <when>)`
+- `Pattern: <observation>` (for pattern-breaks worth flagging)
+- `Done: <briefing item> — <how detected>` (when the agent notices the user acted on something)
 
-## Meeting Notes: [Meeting Name]
-- Attendees: ...
-- Key topics: ...
-- Detected follow-ups: ...
+Examples (real-shape, generic content):
+- `[PROJ-456] Security approved SCIM at 14:22 — Maria can resume implementation; no blockers left.`
+- `Suggest: Move PROJ-789 → In Review — PR #42 was merged at 15:30 by reviewer.`
+- `Decision: ADA 2.0 switchover slips to May 15 (Karolis on PROJ-101, 11:08).`
+- `Done: ESD-28860 severity bump — you set High/Sev 2 at 14:49; ball back with Evaldas.`
 
-## Decision Detected
-- **What**: Security team approved the SCIM approach for user provisioning
-- **Who**: [person], via email thread "[subject]"
-- **When**: 2026-03-17 14:22
-- **Relates to**: PROJ-456, Confluence page "SCIM Design"
+No subject prefix needed — Mattermost shows them in the channel feed. Use markdown sparingly (bold for ticket ids OK; tables and code blocks render poorly in mobile chat).
 
-## Research: [Topic]
-- [summary of technical findings with links]
+### Gmail draft format (long-form synthesis only)
 
-## FYI
-- [lower-priority observations]
-```
+Use the subject prefix from `config.json > email.subject_prefix` (default: `[Heartbeat]`).
 
-Not all sections appear every time — only include sections that have content. Keep the email scannable.
+Long-form drafts only happen when the agent has multi-paragraph synthesis to deliver — not every heartbeat. Common triggers: EOD review, Friday weekly summary, Friday self-assessment, research write-up >200 words. The agent calls `runner send-email` to stage the payload, then calls `gmail_create_draft` with the recipient/subject/body the runner returned verbatim.
 
-### EOD Email Structure
+### EOD Draft Structure
 ```
 Subject: [Heartbeat] EOD — [date]
 
@@ -274,6 +274,14 @@ Subject: [Heartbeat] EOD — [date]
 - Email replies: N
 - Suggestion follow-through: N of N acted on
 ```
+
+### EOD Mattermost teaser
+
+After the EOD draft is staged in Gmail, post one Mattermost line summarizing it so the user knows to check drafts:
+
+`[EOD <YYYY-MM-DD>] Draft ready — top: <one-sentence headline finding>. <N> open items carried to tomorrow.`
+
+This is the only Mattermost output from the EOD run. The full review lives in the Gmail draft for considered reading.
 
 ## File Conventions
 
@@ -367,85 +375,46 @@ Subject: [Heartbeat] EOD — [date]
 
 ## Provider Adapter (capability → tool name)
 
-Maestro is provider-agnostic. The prompts and operating rules above refer to capabilities ("search Gmail", "list Calendar events", "send email"); this section maps each capability to the actual tool/function names per runtime. Mismatches here are the most common cause of a heartbeat failing to find data on a freshly-configured runtime.
+Per-runtime MCP config templates live in `mcp/`; quickstart guides in `providers/`. Mismatches between the canonical function names below and what your runtime exposes are the most common cause of heartbeat failures on a freshly-configured runtime.
 
-Per-runtime MCP config templates live in `mcp/` (`mcp/claude-code.mcp.json`, `mcp/codex.json`, `mcp/opencode.json`, `mcp/deep-agents.yaml`). Per-runtime quickstart guides live in `providers/`.
+### Read capabilities (called directly by the agent)
 
-### Read capabilities (no side effects, called directly by the agent)
+Function names below are MCP-server-native — before any runtime wrapper.
 
-All read capabilities below are MCP function names — the names exposed by the underlying MCP server, before any runtime-specific wrapper prefix.
-
-| Capability | MCP server | Function name |
+| Source | Server | Key functions |
 |---|---|---|
-| Search Gmail messages | Pipedream Gmail | `gmail-search-messages` |
-| Read one Gmail message | Pipedream Gmail | `gmail-read-message` |
-| Read a Gmail thread | Pipedream Gmail | `gmail-read-thread` |
-| Get Gmail profile (auth probe) | Pipedream Gmail | `gmail-get-profile` |
-| List Google Calendar events | Pipedream Google Calendar | `google_calendar-list-events` |
-| List Google calendars | Pipedream Google Calendar | `google_calendar-list-calendars` |
-| Get one Google Calendar event | Pipedream Google Calendar | `google_calendar-get-event` |
-| Search Jira issues (JQL) | Atlassian | `searchJiraIssuesUsingJql` |
-| Get one Jira issue | Atlassian | `getJiraIssue` |
-| Discover accessible Atlassian resources (cloudId) | Atlassian | `getAccessibleAtlassianResources` |
-| Current Atlassian user | Atlassian | `atlassianUserInfo` |
-| Lookup Atlassian account ID | Atlassian | `lookupJiraAccountId` |
-| Search Confluence (CQL) | Atlassian | `searchConfluenceUsingCql` |
-| Get Confluence page | Atlassian | `getConfluencePage` |
-| List Confluence spaces | Atlassian | `getConfluenceSpaces` |
-| Get pages in Confluence space | Atlassian | `getPagesInConfluenceSpace` |
-| List Google Drive files | Pipedream Google Drive | `google_drive-list-files` |
-| Find Google Drive file | Pipedream Google Drive | `google_drive-find-file` |
-| Download Google Drive file | Pipedream Google Drive | `google_drive-download-file` |
-| Search shared drives | Pipedream Google Drive | `google_drive-search-shared-drives` |
-| Get S3 object (state pull) | AWS | `s3-get-object` (or via `runner/maestro.py state pull`) |
-| Put S3 object (state push) | AWS | `s3-put-object` (or via `runner/maestro.py state push`) |
-| Get secret value | AWS | `secretsmanager-get-secret-value` (or via `runner/maestro.py secrets pull`) |
+| Gmail (read + draft) | claude.ai Gmail (or Pipedream Gmail) | `gmail-search-messages`, `gmail-read-message`, `gmail-read-thread`, `gmail-get-profile`, `gmail_create_draft` |
+| Calendar | claude.ai Google Calendar (or Pipedream) | `google_calendar-list-events`, `google_calendar-list-calendars`, `google_calendar-get-event` |
+| Jira | Atlassian | `searchJiraIssuesUsingJql`, `getJiraIssue`, `getAccessibleAtlassianResources`, `atlassianUserInfo`, `lookupJiraAccountId` |
+| Confluence | Atlassian | `searchConfluenceUsingCql`, `getConfluencePage`, `getConfluenceSpaces`, `getPagesInConfluenceSpace` |
+| Drive | Pipedream Google Drive | `google_drive-list-files`, `google_drive-find-file`, `google_drive-download-file`, `google_drive-search-shared-drives` |
+| Web search/fetch | runtime-native | Claude Code: `WebSearch`/`WebFetch`. Codex: `web_search`/`web_fetch`. opencode: varies (Tavily/Serper/etc.). |
 
-### Write capabilities (always via runner — never via direct MCP/tool)
-
-The runner enforces destination, recipient, and channel guarantees that prompt-level rules alone cannot. The agent's only allowed write surface is operational state files; everything else routes through `runner/maestro.py`.
+### Write capabilities (always via runner)
 
 | Capability | Invocation |
 |---|---|
-| Stage email payload (recipient lock) | `python3 runner/maestro.py send-email --subject "…" --body "…"` — returns JSON with recipient pulled from `config.json > email.recipient`. The agent then uses one of the Gmail tools below to deliver. |
-| Create Gmail draft (default) | Runtime tool: `gmail_create_draft` (claude.ai Gmail connector) or equivalent. Pass the recipient/subject/body **verbatim from the runner's staged payload**. The user reviews the draft and clicks Send themselves. |
-| Send Gmail directly (optional) | Runtime tool: `gmail-send-email` (Pipedream MCP) — only if your runtime has this and the user has opted into direct-send. Same recipient-from-staged-payload rule. |
-| Post Mattermost urgent | `python3 runner/maestro.py mattermost --urgent "one-line summary"` (channel locked to `MATTERMOST_CHANNEL_ID` from env; max 2 in normal mode, 4 in fallback) |
-| Write operational-state file | `python3 runner/maestro.py write <path> <content>` (path validated against the writable surface; direct file writes to the writable surface are still allowed) |
-| Pull state at run start | `python3 runner/maestro.py state pull` (S3 → working tree, or `~/.maestro/` → working tree if `MAESTRO_STATE_BACKEND=local`) |
-| Push state at run end | `python3 runner/maestro.py state push` |
-| Pull secrets at run start | `python3 runner/maestro.py secrets pull` (AWS Secrets Manager → process env vars; skipped silently if `MAESTRO_STATE_BACKEND=local` or if AWS credentials are already set in env) |
+| Stage email (recipient lock) | `python3 runner/maestro.py send-email --subject "…" --body "…"` — returns JSON with recipient pulled from `config.json`. Agent then calls `gmail_create_draft` with the staged payload verbatim. |
+| Post Mattermost line | `python3 runner/maestro.py mattermost --urgent "one-line"` (channel locked to `MATTERMOST_CHANNEL_ID` from env). Sanity cap 100 lines/run via `MAESTRO_MATTERMOST_CAP`. |
+| Write operational-state file | `python3 runner/maestro.py write <path> <content>` (path-validated). Direct writes to the writable surface (`daily/`, `knowledge/`, etc.) are allowed without the runner. |
+| State pull/push | `python3 runner/maestro.py state pull` and `… state push` (S3 by default; `~/.maestro/` when `MAESTRO_STATE_BACKEND=local`). |
+| Secrets pull | `python3 runner/maestro.py secrets pull` (AWS Secrets Manager → env vars; skipped on local backend). |
 
-### Runtime-specific tool-name wrappers
+### Runtime-specific wrappers
 
-Different runtimes wrap MCP function names with different prefixes. The function names in the table above are the canonical names. Common patterns:
+Each runtime prefixes/wraps the canonical function names differently. Examples for `gmail-search-messages`:
 
-| Runtime | Wrapper convention | Example for `gmail-search-messages` (Pipedream server) |
-|---|---|---|
-| Claude Code | `mcp__<server>__<function>` | `mcp__pipedream__gmail-search-messages` |
-| Codex CLI | `<server>.<function>` (or sanitized) | `pipedream.gmail-search-messages` |
-| opencode | `<server>:<function>` | `pipedream:gmail-search-messages` |
-| deep-agents | LangGraph tool name (configurable per agent) | see `mcp/deep-agents.yaml` |
+- Claude Code: `mcp__pipedream__gmail-search-messages` (or `mcp__claude_ai_Gmail__gmail_search_messages` for the claude.ai-side connector)
+- Codex CLI: `pipedream.gmail-search-messages`
+- opencode: `pipedream:gmail-search-messages`
+- deep-agents: configured per-agent — see `mcp/deep-agents.yaml`
 
-If your runtime's tool list doesn't show the function name from the canonical table, consult `providers/<runtime>.md` and `mcp/<runtime>.*` for the exact wrapper.
-
-### Web search and web fetch
-
-Native to every Tier-1 and Tier-2 runtime. The agent calls "search the web" / "fetch a page URL" — the runtime maps it to whatever tool it has.
-
-| Runtime | Search tool | Fetch tool |
-|---|---|---|
-| Claude Code | `WebSearch` | `WebFetch` |
-| Codex CLI | built-in `web_search` | built-in `web_fetch` |
-| opencode | varies (Tavily / Serper / Brave / browser-use MCP) | varies |
-| deep-agents | varies (configured per agent) | varies |
-
-If your runtime lacks a web search or web fetch tool, the heartbeat's Step 3 research budget for the affected source is skipped and `web search unavailable in this runtime` is logged to the daily log.
+When in doubt, consult `providers/<runtime>.md`.
 
 ### Provider-specific notes
 
-- **Claude Code + Anthropic Routines**: claude.ai-side Gmail and Google Calendar connectors (`mcp__claude_ai_Gmail__*`, `mcp__claude_ai_Google_Calendar__*`) provide read + Gmail draft creation. Drive support varies — check claude.ai/customize/connectors. **Default delivery mode is Gmail draft** via `gmail_create_draft` (the user clicks Send after a quick review). For direct-send, add the Pipedream Gmail connector and call `gmail-send-email` instead — but Pipedream's reliability has been mixed, so draft mode is the safer default.
-- **Anthropic Remote Routines**: clones a public repo; sandbox cannot push back. State persistence flows through S3 via the AWS MCP at run boundaries (`state pull` / `state push`). Secrets flow through AWS Secrets Manager via the AWS MCP at run start (`secrets pull`).
-- **Codex CLI**: 32 KiB AGENTS.md size limit. This file is sized under that.
-- **opencode**: reads `AGENTS.md` natively; project MCP config in `opencode.json`.
-- **deep-agents**: AGENTS.md + SKILL.md pattern; MCP config in deep-agents agent spec.
+- **Claude Code + Anthropic Routines**: claude.ai-side Gmail connector includes draft creation (`gmail_create_draft`) — that's the default delivery mode for long-form output. Pipedream `gmail-send-email` is opt-in only.
+- **Anthropic Routines**: sandbox can't `git push` back. State persists via S3 (`runner state pull/push`). Secrets via AWS Secrets Manager (`runner secrets pull`). AWS credentials come from the routine's environment env-vars, not an MCP connector.
+- **Codex CLI**: AGENTS.md is capped at 32 KiB — this file is sized to fit.
+- **opencode**: reads AGENTS.md natively; project MCP in `opencode.json`.
+- **deep-agents**: AGENTS.md + SKILL.md pattern.

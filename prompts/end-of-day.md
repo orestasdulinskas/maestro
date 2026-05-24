@@ -164,44 +164,49 @@ Write `briefing.md` as a briefing for tomorrow morning:
 
 Keep it under 60 lines. Be actionable and specific. Every item should answer "what do I need to do?" not just "what happened?"
 
-## 6. Delivery (email primary, Mattermost fallback)
+## 6. Delivery
 
-### Step 6.1 — Determine if email is available
+EOD is multi-section long-form synthesis — the canonical example of a Gmail draft per the form-factor routing rule (see AGENTS.md → Core Principle). Email is primary; Mattermost gets a one-line teaser pointing at the draft.
 
-Apply the same check as `prompts/heartbeat.md` § 6a Step 1:
-- `state.json > sources.gmail_sent.last_failure` more recent than `last_success`, OR
-- `state.json > sources.gmail_sent.last_known_status` is `degraded` or `disabled`, OR
-- A previous attempt this run returned a Pipedream Connect URL / auth-failure response.
+### Step 6.1 — Create the EOD Gmail draft
 
-### Step 6.2 — If email is available, deliver the EOD summary
+Stage the payload via `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner reads the recipient from `config.json > email.recipient`, validates it, and emits the staged payload.
 
-Stage the EOD payload via `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner reads the recipient from `config.json > email.recipient`, validates it, and emits the staged payload.
-
-Then deliver via your runtime's Gmail capability:
-- **Draft mode (default)**: call the `gmail_create_draft` tool with the recipient/subject/body the runner returned — verbatim. The draft appears in the user's Gmail; they review and Send themselves.
-- **Direct-send mode (opt-in)**: only if Pipedream's `gmail-send-email` is configured, call that with the same staged payload.
+Then call your runtime's `gmail_create_draft` tool with the recipient/subject/body the runner returned — verbatim. The draft appears in the user's Gmail drafts; they review and Send themselves.
 
 Defense in depth:
 - The runner is the source of truth for the recipient. **Do not** pass a recipient yourself — copy it from the runner's staged output.
 - No CC, no BCC, no other recipients. Ever.
 - Subject: `[Heartbeat] EOD — <date> summary`
-- Body: Combine a brief day recap (key outcomes, decisions, items resolved) with tomorrow's briefing. Include any suggestions, research, or drafted content accumulated during the day (see AGENTS.md for email format). Keep it scannable — the user should be able to read this on their phone in 60 seconds.
+- Body: Combine a brief day recap (key outcomes, decisions, items resolved) with tomorrow's briefing. Include any suggestions, research, or drafted content accumulated during the day (see AGENTS.md for the EOD draft structure).
 - On Fridays, include the Weekly Summary section AND the Agent Self-Assessment section (see AGENTS.md for metrics, thresholds, and format).
 - The self-assessment should use `state.json` metrics (weekly counters) as the primary data source, supplemented by reviewing daily logs for detail. More reliable than counting from prose logs alone.
 - Use plain text — no HTML.
 
-### Step 6.3 — If email is unavailable, post EOD summary to Mattermost
+### Step 6.2 — Post the EOD Mattermost teaser
 
-Email unavailable for EOD is a real problem (the user needs a daily recap regardless). Fall back to Mattermost with the **most condensed possible** version:
+Right after the draft is created, post one Mattermost line so the user knows to check drafts:
 
-- Invoke `python3 runner/maestro.py mattermost --urgent "<multi-line-condensed-summary>"` with a **single** multi-line argument (not multiple invocations like the heartbeat path). EOD is one logical piece, not many. The first non-empty line in the summary should start with `[EOD <date>]`.
-- Hard cap: 1000 chars total (Mattermost messages render fine up to several KB but mobile readability collapses past ~5 short paragraphs). Keep to ~5 short sections.
-- Sections to include if anything noteworthy: (a) what closed today, (b) what's still in flight, (c) tomorrow's top 3 priorities, (d) Friday-only: 1-line weekly takeaway. Skip empty sections.
-- Note in today's daily log: `Delivery: email unavailable (reason); EOD summary delivered via Mattermost instead.`
+```bash
+python3 runner/maestro.py mattermost --urgent "[EOD <YYYY-MM-DD>] Draft ready — top: <one-sentence headline finding from today>. <N> open items carried to tomorrow."
+```
+
+This is the only Mattermost output from the EOD run. The full review lives in the Gmail draft. On Fridays, the teaser can mention the weekly + self-assessment: `[EOD <date>] Draft ready — week wrap-up + self-assessment. Top: <headline>. <N> carried.`
+
+### Step 6.3 — Graceful degradation
+
+If `gmail_create_draft` fails (Gmail connector degraded, auth expired, MCP server unreachable), fall back to posting the EOD content as a multi-line Mattermost message:
+
+- Invoke `python3 runner/maestro.py mattermost --urgent "<multi-line-condensed-summary>"` with a **single** multi-line argument. EOD as a fallback is one logical piece, not a sequence of one-liners.
+- The first non-empty line should start with `[EOD <date>] DRAFT FAILED —`.
+- Hard limit: ~1500 chars (Mattermost handles longer but mobile readability collapses).
+- Sections to include if noteworthy: (a) what closed today, (b) what's still in flight, (c) tomorrow's top 3 priorities, (d) Friday-only: 1-line weekly takeaway.
+
+If Mattermost is ALSO down, write the full content to `daily/YYYY-MM-DD.md` under a `### EOD content (undelivered)` section. The user can read it there once a channel recovers.
 
 ### Step 6.4 — Log delivery status to today's daily log
 
-Append a `### Delivery` block recording whether email was sent, Mattermost was used, or neither. This makes the EOD self-assessment honest and lets the user see at a glance why a briefing arrived (or didn't).
+Append a `### Delivery` block recording: which channels were used (Gmail draft, Mattermost teaser, both), any failures, and whether degradation paths were taken. This makes the EOD self-assessment honest and lets the user see at a glance why a briefing arrived (or didn't).
 
 ## 7. Update state.json
 

@@ -58,10 +58,11 @@ PROTECTED_FILES = (
 )
 PROTECTED_GLOB_PREFIXES = (".env",)
 
-# Mattermost cap per heartbeat run. The runner refuses additional urgent lines past
-# this; an `MAESTRO_MATTERMOST_FALLBACK=1` env raises to MATTERMOST_FALLBACK_CAP.
-MATTERMOST_NORMAL_CAP = 2
-MATTERMOST_FALLBACK_CAP = 4
+# Sanity cap on Mattermost lines per run. Not the design-level cap (the prompts
+# say "no cap; trust the agent's judgment" under the form-factor routing rule);
+# this is just a runaway-loop protection. The agent should never approach it
+# under normal operation. Override per-run by setting MAESTRO_MATTERMOST_CAP.
+MATTERMOST_SANITY_CAP = 100
 
 
 def now_iso() -> str:
@@ -244,22 +245,23 @@ def cmd_mattermost(args: argparse.Namespace) -> int:
     TMP_DIR.mkdir(exist_ok=True)
     marker = TMP_DIR / "mattermost_urgent.txt"
 
-    # Cap check
-    cap = MATTERMOST_FALLBACK_CAP if os.environ.get("MAESTRO_MATTERMOST_FALLBACK") == "1" \
-        else MATTERMOST_NORMAL_CAP
+    # Sanity check only. The prompts handle "what's worth posting" — the runner
+    # shouldn't override the agent's judgment. This is a runaway-loop guard.
+    cap = int(os.environ.get("MAESTRO_MATTERMOST_CAP", MATTERMOST_SANITY_CAP))
     existing = []
     if marker.exists():
         existing = [l for l in marker.read_text(encoding="utf-8").splitlines() if l.strip()]
     if len(existing) >= cap:
         sys.stderr.write(
-            f"runner mattermost: cap reached ({cap} lines for this run); refusing additional line.\n"
+            f"runner mattermost: sanity cap reached ({cap} lines this run); refusing additional line. "
+            f"If this is legitimate, raise MAESTRO_MATTERMOST_CAP.\n"
         )
         return 3
 
     # Append to marker file
     with open(marker, "a", encoding="utf-8") as f:
         f.write(line + "\n")
-    sys.stderr.write(f"runner mattermost: staged line #{len(existing) + 1}/{cap}.\n")
+    sys.stderr.write(f"runner mattermost: posting line #{len(existing) + 1}.\n")
 
     # Deliver inline by default. Skip only if explicitly opted out (rare —
     # for flows where another orchestrator handles delivery post-run).
