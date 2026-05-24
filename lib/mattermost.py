@@ -227,7 +227,14 @@ def cmd_send_file(path):
             # (they have no information value).
             continue
         try:
-            _post_one(line)
+            post_id = _post_one(line)
+            # Emit post id on stdout so callers (and the runner's subprocess
+            # forwarder) can confirm exactly which lines actually landed in
+            # Mattermost. One id per delivered line. This was a verification
+            # gap surfaced 2026-05-24: cmd_send_file used to silently swallow
+            # the post id (only cmd_send printed it), making the runner's
+            # success path indistinguishable from staging on stdout alone.
+            print(post_id)
             sent += 1
         except HttpError as e:
             failed = True
