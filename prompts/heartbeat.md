@@ -34,6 +34,11 @@ This check runs before all other source checks below.
 
 ## 2. Check Data Sources
 
+This scan has **two axes** of equal importance — give both equal weight:
+
+1. **Inbound**: what arrived since the last heartbeat (new emails, ticket changes, calendar invites, doc edits by collaborators). Standard "what's new for me to react to".
+2. **User actions**: what the user has been doing themselves since the last heartbeat (emails sent, Jira tickets transitioned/commented, Confluence pages authored, Calendar invites accepted/declined, **Google Drive files edited — especially code projects**). The agent's job is not just "incoming triage" but "summary of the user's recent activity across their workspace". Drive is the strongest signal for active code work — a burst of file edits in a project folder means the user is heads-down on that project.
+
 **IMPORTANT — Time windows**: Read the `## Run Context` section at the top of this prompt. It contains the timestamp of the last successful heartbeat run. Use that timestamp to construct your search queries instead of hardcoded relative windows. This prevents gaps between runs.
 
 - **Gmail**: Convert the last-run ISO timestamp to epoch seconds for `after:EPOCH` queries. If no last-run timestamp exists (first run), fall back to `newer_than:1d`.
@@ -50,11 +55,12 @@ Search for emails received since the last heartbeat:
 - For important/relevant emails, read the full message
 - Note: sender, subject, relevance to active projects
 
-### Gmail — Sent (action detection)
+### Gmail — Sent (USER actions)
 Search for emails the user sent since the last heartbeat:
 - Use the Gmail search capability with query: `from:me after:EPOCH`
-- If the user sent a reply related to a watchlist item or briefing action item, mark it as **acted on**
-- Update the briefing and watchlist accordingly — don't keep nagging about things already done
+- Synthesize: who did they reply to, what threads did they close, what new conversations did they start?
+- Cross-reference each sent email against watchlist + briefing — if the user replied to a tracked item, mark it **acted on**, resolve the watchlist entry, drop it from the briefing.
+- Post a Mattermost line if the sent email represents a meaningful action (e.g., `You replied to PROJ-456 thread at 11:42 — closed the security question with Maria`).
 
 ### Google Calendar
 Try the Calendar list-events capability (MCP function `google_calendar-list-events`) first to list events for the next 2 hours and events that ended in the past 2 hours. If the Calendar capability is UNAVAILABLE, fall back to Gmail invite search:
@@ -65,10 +71,15 @@ Try the Calendar list-events capability (MCP function `google_calendar-list-even
 - Flag any upcoming meetings that relate to active projects
 - Note preparation needed for meetings
 
-### Jira
-- Search for issues assigned to the user updated since last run: `assignee = currentUser() AND updated >= "YYYY/MM/DD HH:mm" ORDER BY updated DESC`
-- Search for issues the user is watching that changed: `watcher = currentUser() AND updated >= "YYYY/MM/DD HH:mm" ORDER BY updated DESC`
-- For any changed issues, note what changed and why it matters
+### Jira — both inbound and USER actions
+Run all four queries below; each catches a different signal class.
+
+- **Inbound (changes on tickets you watch)**: `watcher = currentUser() AND updated >= "YYYY/MM/DD HH:mm" ORDER BY updated DESC` — someone else moved/commented on something you care about.
+- **Inbound (your assigned tickets)**: `assignee = currentUser() AND updated >= "YYYY/MM/DD HH:mm" ORDER BY updated DESC` — a teammate updated something assigned to you.
+- **USER actions (transitions/comments by you)**: `(reporter = currentUser() OR assignee = currentUser()) AND updated >= "YYYY/MM/DD HH:mm"` — combined with checking changelog for who-did-what. If the latest changelog entry has author = you, this is a USER ACTION worth noting (it represents your decision/work, not someone else's update).
+- **USER actions (tickets you created)**: `reporter = currentUser() AND created >= "YYYY/MM/DD HH:mm"` — new tickets you filed.
+
+For each ticket touched: extract who-did-what, when, what changed. Post a Mattermost line per substantive movement. If the user themselves transitioned a ticket, frame it as `Done: <TICKET> → <new state> at HH:MM` (they did it; just confirming you noticed).
 
 ### Confluence — User's pages
 - Search for recently modified pages: use CQL `lastModified >= "YYYY-MM-DD HH:mm" AND contributor = currentUser()`
@@ -78,11 +89,32 @@ Try the Calendar list-events capability (MCP function `google_calendar-list-even
 - Example: search for pages mentioning key project names (see `knowledge/active-context.md` for the user's current project codes) modified since last run
 - This catches updates from teammates that the user needs to know about but wouldn't see in the user-only query
 
-### Google Drive
-- Use the Google Drive list-files capability (MCP function `google_drive-list-files`) to list recently modified files, or `google_drive-find-file` to search by name/keyword
-- Use `google_drive-search-shared-drives` to discover shared drives (the drives you actively track should live in `knowledge/active-context.md`)
-- Look for documents relevant to active projects, watchlist items, and upcoming meetings
-- For important files, use `google_drive-get-file-by-id` to read metadata or `google_drive-download-file` to read content
+### Google Drive — the strongest USER-action signal (especially code projects)
+
+Drive is the highest-signal source for understanding what the user has actually been doing. Code projects live as files (or are referenced from folders) in Drive — a burst of edits in a project folder is the clearest "user is heads-down on this" signal Maestro has.
+
+Run these checks in order:
+
+1. **Files YOU modified since the last heartbeat**. List files with `modifiedTime >= last-run-timestamp` AND last-modifying-user = you. Group results by parent folder. Folders with multiple recent edits are **active projects** for this user this run.
+2. **Project identification**. For each active folder, cross-reference against `knowledge/active-context.md`:
+   - If the folder maps to a tracked project → note the burst of activity in your daily log.
+   - If the folder is NOT in active-context → flag it; the user may be starting new work that should be tracked. Suggest a `knowledge/active-context.md` addition in your Mattermost line.
+3. **Code-specific signals**. Files with extensions like `.py`, `.ts`, `.js`, `.sql`, `.tf`, `.yaml`, `.yml`, `.ipynb`, `.md` (READMEs/docs), `.dockerfile`, `.sh` indicate code/infra work. A burst of these in a folder is a code-project signal. Mention the project name + file extensions + count: `Drive: 7 edits to <PROJECT-FOLDER> (5×.py, 2×.md) since last run — looks like active coding on <PROJECT>.`
+4. **Collaborator activity on YOUR projects**. List files modified by *other people* in folders where the user has recent activity. These are teammates working alongside you on shared projects.
+5. **New documents shared with you** since the last heartbeat (Drive's "shared with me" semantics).
+
+Tooling:
+- `google_drive-list-files` to list recently modified files. Apply `modifiedTime` filter ≥ last-run-timestamp. The Drive API returns `lastModifyingUser` per file — filter client-side by `lastModifyingUser.me == true` for "what YOU did". (If the MCP wrapper doesn't expose this filter, pull a broader window then filter in your response synthesis.)
+- `google_drive-search-shared-drives` to discover the shared drives the user has access to. Tracked drives should live in `knowledge/active-context.md` so subsequent runs scope queries efficiently.
+- `google_drive-find-file` for keyword searches by file name (useful when you know a project name).
+- `google_drive-get-file-by-id` for full metadata of important files (parents/folders, lastModifyingUser, size).
+- `google_drive-download-file` ONLY when reading content is essential — e.g., a meeting note doc tied to an upcoming meeting, or a new spec the user just authored.
+
+Mattermost line patterns for Drive findings:
+- `Drive: <N> edits in <PROJECT-FOLDER> (<file-mix>) — active code work since HH:MM` (user-action burst)
+- `Drive: new file <NAME.ext> created by you in <FOLDER>` (single notable new artifact)
+- `Drive: <COLLABORATOR> updated <FILE> in <PROJECT-FOLDER> at HH:MM` (teammate touched your shared project)
+- `Drive: untracked active folder <FOLDER> — consider adding to active-context.md` (new project signal)
 
 ### Error Handling
 If any data source fails (auth error, timeout, tool error):

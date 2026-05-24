@@ -56,9 +56,9 @@ Output categories:
 2. Check Gmail for new/unread messages AND sent messages (detect user actions)
 3. Check for replies to `[Heartbeat]` emails (user feedback)
 4. Check Google Calendar for upcoming events (next 2 hours) and recently ended events (past 2 hours). If the Calendar tool is unavailable, fall back to Gmail invite search (`has:invite`)
-5. Check Jira for recently updated or assigned issues
-6. Check Confluence — both user's pages AND team activity on tracked projects
-7. Check Google Drive for recently modified documents in shared drives you've configured the agent to track (the specific drive names live in `knowledge/active-context.md`, not in this file) — look for documents relevant to active projects and watchlist items
+5. Check Jira: inbound (watcher/assignee) + USER actions (transitions/comments — changelog author tells you who-did-what)
+6. Check Confluence: user-authored pages (USER actions) + team activity on tracked projects (inbound)
+7. Check Google Drive — **strongest USER-action signal, especially code projects**. List user-modified files since last run, group by folder, treat bursts as active projects. Code extensions (`.py`/`.ts`/`.sql`/`.tf`/`.ipynb`/`.md`) signal active coding. Full procedure: `prompts/heartbeat.md` Drive section.
 
 #### 2. Analyze & Synthesize
 8. **Be proactive**: Don't just report — investigate, research, and synthesize. Read linked documents, follow up on threads, check relevant Google Drive files for context the user will need. The briefing should let them act immediately.
