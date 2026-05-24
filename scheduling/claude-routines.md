@@ -23,10 +23,6 @@ AWS_SECRET_ACCESS_KEY=<your maestro-routine secret>
 MAESTRO_STATE_BUCKET=<your bucket name>
 MAESTRO_STATE_BACKEND=s3
 MAESTRO_SECRETS_PREFIX=maestro/
-# Cloud-only: deliver Mattermost lines inline (the runner default is to stage
-# them to .tmp/, which works for local run.sh post-processing but not for
-# cloud sandboxes that tear down immediately after the agent exits).
-MAESTRO_MATTERMOST_DELIVER=1
 ```
 
 **Setup script** (runs once at session start, before Claude Code launches):
@@ -184,6 +180,6 @@ Report which sources connected and exit. Do not send anything.
 | `runner secrets pull` fails with AccessDenied | IAM policy missing `secretsmanager:GetSecretValue` on `maestro/*` | Update `MaestroRoutinePolicy` to include the secret ARN pattern |
 | Gmail draft created with wrong recipient | Agent passed its own recipient instead of using runner's staged value | Re-read the routine prompt step 3; the recipient must come from `runner send-email` stdout. The agent should also abort if the recipient doesn't match `config.json > email.recipient` |
 | No Gmail draft appears | `gmail_create_draft` not in the connector's allow-list, or the connector's auth expired | Reconnect Gmail at claude.ai/customize/connectors and confirm draft scope is granted |
-| No Mattermost message arrives despite "staged" success | `MAESTRO_MATTERMOST_DELIVER=1` not set in environment vars — runner staged to `.tmp/` (the local-flow default) but the cloud sandbox tore down before anything delivered | Add `MAESTRO_MATTERMOST_DELIVER=1` to the cloud environment's env vars |
 | Mattermost fails with HTTP error | Either `MATTERMOST_BOT_TOKEN` wasn't loaded (step 1's `secrets pull` failed silently) or the bot isn't in the channel | Check stderr from `runner secrets pull`; confirm `MATTERMOST_CHANNEL_ID` is correct and the bot account is a member of that channel |
+| Mattermost runner reports "staged" but no message arrives | You're on an older runner version that staged by default. The runner now delivers inline by default (since the 2026-05 fix). | Pull the latest from the public repo; the `--deliver` flag and `MAESTRO_MATTERMOST_DELIVER` env var are no longer required. |
 | Routine clones an outdated commit | Anthropic caches the clone briefly | Wait ~5 min or rename the routine to force a fresh clone |

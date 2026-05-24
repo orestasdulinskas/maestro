@@ -221,12 +221,18 @@ def cmd_write(args: argparse.Namespace) -> int:
 
 
 def cmd_mattermost(args: argparse.Namespace) -> int:
-    """Stage and (optionally) deliver an urgent Mattermost line.
+    """Stage and deliver an urgent Mattermost line.
 
-    Default behavior matches the legacy `.tmp/mattermost_urgent.txt` pattern:
-    the line is appended to that file. If --deliver is passed (or env
-    MAESTRO_MATTERMOST_DELIVER=1), the runner immediately calls
-    lib/mattermost.py to send.
+    Default behavior (since 2026-05): the line is appended to
+    `.tmp/mattermost_urgent.txt` AND delivered inline via `lib/mattermost.py`.
+    On successful delivery the marker file is cleaned up by `send-file`; on
+    failure the unsent line is preserved so an external post-run hook (e.g.,
+    the legacy `providers/claude-code/run.sh` flow) can retry.
+
+    Pass `--stage-only` (or `MAESTRO_MATTERMOST_STAGE_ONLY=1`) to skip the
+    inline delivery — useful only in flows where another orchestrator handles
+    the actual API call. The `--deliver` flag is kept as a no-op for backward
+    compatibility (delivery is now the default).
     """
     line = (args.urgent or "").strip()
     if not line:
@@ -250,24 +256,27 @@ def cmd_mattermost(args: argparse.Namespace) -> int:
         )
         return 3
 
-    # Append
+    # Append to marker file
     with open(marker, "a", encoding="utf-8") as f:
         f.write(line + "\n")
     sys.stderr.write(f"runner mattermost: staged line #{len(existing) + 1}/{cap}.\n")
 
-    # Deliver inline if requested. Otherwise the runtime (or run.sh) handles it
-    # post-run.
-    deliver = args.deliver or os.environ.get("MAESTRO_MATTERMOST_DELIVER") == "1"
-    if deliver:
-        mattermost_py = LIB / "mattermost.py"
-        if not mattermost_py.exists():
-            sys.stderr.write("runner mattermost: lib/mattermost.py missing; staged only.\n")
-            return 0
-        result = shell_out([sys.executable, str(mattermost_py), "send-file", str(marker)])
-        sys.stdout.write(result.stdout)
-        if result.returncode != 0:
-            sys.stderr.write(result.stderr)
-            return result.returncode
+    # Deliver inline by default. Skip only if explicitly opted out (rare —
+    # for flows where another orchestrator handles delivery post-run).
+    stage_only = args.stage_only or os.environ.get("MAESTRO_MATTERMOST_STAGE_ONLY") == "1"
+    if stage_only:
+        sys.stderr.write("runner mattermost: --stage-only set; skipping inline delivery.\n")
+        return 0
+
+    mattermost_py = LIB / "mattermost.py"
+    if not mattermost_py.exists():
+        sys.stderr.write("runner mattermost: lib/mattermost.py missing; staged only.\n")
+        return 0
+    result = shell_out([sys.executable, str(mattermost_py), "send-file", str(marker)])
+    sys.stdout.write(result.stdout)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        return result.returncode
     return 0
 
 
@@ -617,10 +626,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--body-file")
     sp.add_argument("--append", action="store_true")
 
-    sp = sub.add_parser("mattermost", help="Stage / deliver an urgent Mattermost line")
-    sp.add_argument("--urgent", required=True, help="One-line summary (≤240 chars)")
+    sp = sub.add_parser("mattermost", help="Deliver an urgent Mattermost line (inline by default)")
+    sp.add_argument("--urgent", required=True, help="One-line summary (max 240 chars)")
+    sp.add_argument("--stage-only", action="store_true",
+                    help="Stage to .tmp/ only; skip inline delivery (legacy flow)")
     sp.add_argument("--deliver", action="store_true",
-                    help="Deliver inline (default: stage to .tmp for post-run hook)")
+                    help="(Deprecated; inline delivery is now the default) Kept for backward compatibility.")
 
     sp = sub.add_parser("send-email", help="Stage outgoing email with recipient locked from config.json")
     sp.add_argument("--subject", required=True)
