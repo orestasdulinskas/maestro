@@ -56,6 +56,7 @@
       "mcp__claude_ai_Gmail__gmail_read_message",
       "mcp__claude_ai_Gmail__gmail_read_thread",
       "mcp__claude_ai_Gmail__gmail_get_profile",
+      "mcp__claude_ai_Gmail__gmail_create_draft",
       "mcp__claude_ai_Google_Calendar__gcal_list_events",
       "mcp__claude_ai_Google_Calendar__gcal_get_event",
       "mcp__claude_ai_Google_Calendar__gcal_list_calendars",
@@ -74,7 +75,6 @@
     "deny": [
       "Bash",
       "Agent",
-      "mcp__claude_ai_Gmail__gmail_create_draft",
       "mcp__atlassian__createJiraIssue",
       "mcp__atlassian__editJiraIssue",
       "mcp__atlassian__addCommentToJiraIssue",

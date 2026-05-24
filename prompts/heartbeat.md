@@ -237,11 +237,16 @@ If the only findings are `fyi`, do not send an email (per the "only email when n
 
 **Logging**: For every Mattermost line you stage via the runner, append a `Mattermost sent: <summary> (<ticket/entity-id>)` line to today's `daily/YYYY-MM-DD.md` so the next run's suppression check can find it. (Even though the runner does the actual API call, the agent owns the decision and the log entry.)
 
-### 6b. Email Briefing
+### 6b. Email Delivery
 
-Stage the email payload via `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner reads the recipient from `config.json > email.recipient`, validates it, and emits the staged payload to stdout (and `.tmp/maestro-outgoing-email.json`). Then send the email via your runtime's gmail-send capability (MCP function `gmail-send-email`) using **exactly** the recipient/subject/body the runner returned.
+Stage the email payload via `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner reads the recipient from `config.json > email.recipient`, validates it, and emits the staged payload to stdout (and `.tmp/maestro-outgoing-email.json`).
 
-- The runner is the source of truth for the recipient. **Do not** pass a recipient to the gmail-send call yourself — copy it from the runner's staged output.
+Then deliver using your runtime's Gmail capability. **Default mode is draft** (the user reviews and clicks Send):
+- **Draft mode (default)**: call the `gmail_create_draft` tool with the recipient/subject/body **exactly** as the runner returned them. The draft appears in the user's Gmail; they get a review step before anything goes out.
+- **Direct-send mode (opt-in)**: only if the user has explicitly wired Pipedream's `gmail-send-email` and accepted the no-review trade-off, call that instead with the same staged payload.
+
+Defense in depth:
+- The runner is the source of truth for the recipient. **Do not** pass a recipient to the Gmail call yourself — copy it from the runner's staged output.
 - No CC, no BCC, no other recipients. Ever.
 - Subject: `[Heartbeat] HH:MM — <one-line summary of key finding>`
 - Body: A concise version of your findings — not the full daily log, but the actionable highlights. Write it as if texting a busy person: what matters, what they should do, what's coming up.

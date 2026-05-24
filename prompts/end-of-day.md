@@ -173,10 +173,15 @@ Apply the same check as `prompts/heartbeat.md` § 6a Step 1:
 - `state.json > sources.gmail_sent.last_known_status` is `degraded` or `disabled`, OR
 - A previous attempt this run returned a Pipedream Connect URL / auth-failure response.
 
-### Step 6.2 — If email is available, send the EOD summary
+### Step 6.2 — If email is available, deliver the EOD summary
 
-Stage the EOD payload via `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner reads the recipient from `config.json > email.recipient`, validates it, and emits the staged payload. Then send via your runtime's gmail-send capability (MCP function `gmail-send-email`) using the recipient/subject/body the runner returned — verbatim.
+Stage the EOD payload via `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner reads the recipient from `config.json > email.recipient`, validates it, and emits the staged payload.
 
+Then deliver via your runtime's Gmail capability:
+- **Draft mode (default)**: call the `gmail_create_draft` tool with the recipient/subject/body the runner returned — verbatim. The draft appears in the user's Gmail; they review and Send themselves.
+- **Direct-send mode (opt-in)**: only if Pipedream's `gmail-send-email` is configured, call that with the same staged payload.
+
+Defense in depth:
 - The runner is the source of truth for the recipient. **Do not** pass a recipient yourself — copy it from the runner's staged output.
 - No CC, no BCC, no other recipients. Ever.
 - Subject: `[Heartbeat] EOD — <date> summary`
