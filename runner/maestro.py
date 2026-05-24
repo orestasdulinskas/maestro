@@ -339,10 +339,14 @@ def cmd_send_email(args: argparse.Namespace) -> int:
 
 
 # Files synced to/from the state backend. Mirror the local layout.
+# config.json is config (not state) but routine clones don't have it — sync via
+# the same mechanism so the cloud agent can read email.recipient. If you edit
+# config.json locally, push it to S3 manually or via `runner state push`.
 STATE_FILES = (
     "briefing.md",
     "feedback.md",
     "state.json",
+    "config.json",
 )
 STATE_DIRS = (
     "daily",
@@ -448,7 +452,11 @@ def _state_s3_via_cli(action: str, bucket: str) -> int:
 
 def _state_s3_via_boto3(action: str, bucket: str) -> int:
     import boto3
-    s3 = boto3.client("s3")
+    # boto3's default region resolution checks AWS_DEFAULT_REGION, not AWS_REGION
+    # (which is what the AWS CLI uses). Pass it explicitly so the runner works
+    # regardless of which env-var convention the runtime sets.
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    s3 = boto3.client("s3", region_name=region)
     if action == "pull":
         for f in STATE_FILES:
             try:
@@ -523,7 +531,8 @@ def _secrets_via_cli(names: list[str], shell_format: bool) -> int:
 
 def _secrets_via_boto3(names: list[str], shell_format: bool) -> int:
     import boto3
-    sm = boto3.client("secretsmanager")
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    sm = boto3.client("secretsmanager", region_name=region)
     for name in names:
         try:
             resp = sm.get_secret_value(SecretId=name)
