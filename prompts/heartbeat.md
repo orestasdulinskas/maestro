@@ -64,17 +64,6 @@ Search for emails the user sent since the last heartbeat:
 - Cross-reference each sent email against watchlist + briefing — if the user replied to a tracked item, mark it **acted on**, resolve the watchlist entry, drop it from the briefing.
 - Post a Mattermost line if the sent email represents a meaningful action (e.g., `You replied to PROJ-456 thread at 11:42 — closed the security question with Maria`).
 
-### Gmail — Drafts (pending review reminders)
-Check for unsent Maestro drafts sitting in the user's Gmail Drafts folder. Drafts pile up invisibly if not reviewed — surface them periodically.
-
-- List all Gmail drafts. Most runtimes provide a draft-list capability (MCP function `gmail-list-drafts`, or claude.ai Gmail connector's drafts endpoint). If your runtime doesn't expose draft listing, fall back to Gmail search `in:drafts subject:"<prefix from config.json>"`.
-- Filter for drafts whose subject starts with the prefix from `config.json > email.subject_prefix` (default `[Heartbeat]`). Drafts with other subjects belong to the user's own non-Maestro work — skip those.
-- Record: count of matching drafts + creation date of the oldest.
-- If count = 0, no reminder needed. Move on.
-- If count > 0, queue a Phase 2 candidate Mattermost line:
-  `Drafts pending: <N> Maestro draft(s) in your Gmail (oldest: <YYYY-MM-DD>). Review + Send, or discard.`
-- The standard § 6b suppression rule will gate this: if the same "Drafts pending" line ran in the last 6 hours, the pre-post self-check will skip it. So at most one reminder per ~6h window per persistent-draft situation.
-
 ### Google Calendar
 Try the Calendar list-events capability (MCP function `google_calendar-list-events`) first to list events for the next 2 hours and events that ended in the past 2 hours. If the Calendar capability is UNAVAILABLE, fall back to Gmail invite search:
 - **Fallback**: Gmail search with query `has:invite after:EPOCH` to find calendar invite emails
@@ -144,7 +133,6 @@ Before proceeding to Phase 2, you MUST have notes in your working memory coverin
 Phase 1 facts gathered:
 - Gmail inbound: <N new>, key items: <subject/sender>, ...
 - Gmail sent (USER actions): <N sent>, replied-to / threads-closed: ...
-- Gmail drafts pending: <N matching prefix>, oldest: <date or "none">
 - Calendar: upcoming (next 2h): ..., recently-ended (past 2h): ...
 - Jira inbound: <N updates>, items: ...
 - Jira USER actions: <N transitions/comments by user>, items: ...
@@ -347,15 +335,27 @@ To create the draft:
 
 1. Stage the payload: `python3 runner/maestro.py send-email --subject "…" --body "…"`. The runner pulls the recipient from `config.json > email.recipient`, validates it, prints a JSON payload.
 2. Call your runtime's `gmail_create_draft` tool with the recipient/subject/body **exactly as the runner returned them** — do not paraphrase, do not change the recipient.
-3. Post one Mattermost line announcing the draft. Include the running pending-drafts count from Phase 1 + 1 for the one you just created:
-   `Draft ready: <subject> — <one-line teaser>. (Now <N+1> Maestro draft(s) pending in Gmail.)`
+3. Post one Mattermost line announcing the draft:
+   `Draft ready: <subject> — <one-line teaser of the headline content>.`
 
 Defense in depth:
 - The runner is the source of truth for the recipient. Never pass a recipient yourself.
 - No CC, no BCC, no other recipients. Ever.
 - Use plain text or light markdown in the body — no HTML.
 
-### 6f. Graceful degradation
+### 6f. Pending Gmail drafts sweep (end-of-run, after all other delivery)
+
+After all the per-finding Mattermost lines and any draft created in 6e, do a single sweep for unsent Maestro drafts. This is the last Mattermost line of the run.
+
+- List Gmail drafts. Use the draft-list capability (MCP function `gmail-list-drafts`) or fall back to Gmail search `in:drafts subject:"<prefix>"`.
+- Filter for drafts whose subject starts with `config.json > email.subject_prefix` (default `[Heartbeat]`). Drafts without that prefix belong to the user's own non-Maestro work — skip.
+- If count = 0, skip — no line.
+- If count > 0, post:
+  `Drafts pending: <N> Maestro draft(s) in your Gmail (oldest: <YYYY-MM-DD>). Review + Send or discard.`
+- The standard § 6b suppression rule gates this: the same "Drafts pending: N" line within the last 6h is skipped. Persistent drafts get a reminder roughly once per 6h window, not every heartbeat.
+- This step runs whether or not § 6e created a new draft. A fresh draft from this run will be included in the count.
+
+### 6g. Graceful degradation
 
 If Mattermost delivery fails (runner exits non-zero with HTTP error), the runner preserves the unsent line in `.tmp/mattermost_urgent.txt`. Note the failure in the daily log: `Mattermost delivery failed (<reason>); finding preserved in .tmp/ for next-run retry: <summary>`. Do not re-attempt within this run.
 
