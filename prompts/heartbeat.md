@@ -32,7 +32,9 @@ User feedback can arrive via three channels. Check all three at run start; apply
 
 This check runs before all other source checks below.
 
-## 2. Check Data Sources
+## 2. Phase 1 — Information Gathering (HARD GATE)
+
+Phase 1 is breadth-first. Scan every source, extract facts, build a complete picture. **No synthesis, no Mattermost posts, no Gmail drafts, no WebSearch yet.** Resist the pull to dive deep on the first interesting finding before all sources are checked — that's premature optimization and causes you to miss connections.
 
 This scan has **two axes** of equal importance — give both equal weight:
 
@@ -110,11 +112,11 @@ Tooling:
 - `google_drive-get-file-by-id` for full metadata of important files (parents/folders, lastModifyingUser, size).
 - `google_drive-download-file` ONLY when reading content is essential — e.g., a meeting note doc tied to an upcoming meeting, or a new spec the user just authored.
 
-Mattermost line patterns for Drive findings:
+Mattermost line patterns for Drive findings (DO NOT POST YET — these are templates for Phase 2):
 - `Drive: <N> edits in <PROJECT-FOLDER> (<file-mix>) — active code work since HH:MM` (user-action burst)
 - `Drive: new file <NAME.ext> created by you in <FOLDER>` (single notable new artifact)
 - `Drive: <COLLABORATOR> updated <FILE> in <PROJECT-FOLDER> at HH:MM` (teammate touched your shared project)
-- `Drive: untracked active folder <FOLDER> — consider adding to active-context.md` (new project signal)
+- `Drive: untracked active folder <FOLDER> — proposing active-context addition` (new project signal; see § 6.3 Drive feedback loop)
 
 ### Error Handling
 If any data source fails (auth error, timeout, tool error):
@@ -123,25 +125,65 @@ If any data source fails (auth error, timeout, tool error):
 - If `currentUser()` doesn't resolve in Jira queries, check the Run Context for a cached accountId, or use the `atlassianUserInfo` tool to get the account ID and query by it directly
 - If `getAccessibleAtlassianResources` fails, check the Run Context for a cached cloudId before giving up
 
-## 3. Think, Connect, Research
+### Phase 1 completion checklist
 
-Don't just report what you found. **Be a proactive assistant.** After checking sources, ask yourself:
+Before proceeding to Phase 2, you MUST have notes in your working memory covering each source. Be brief but complete. Use this template:
 
-- "What would be most useful for the user to know right now?"
-- "Is there something I can look up or read that would save the user time?"
-- "Can I connect dots across sources that the user might miss?"
-- "Is there context I can gather now so the user doesn't have to later?"
-- "Has the user already acted on something I was about to flag?"
+```
+Phase 1 facts gathered:
+- Gmail inbound: <N new>, key items: <subject/sender>, ...
+- Gmail sent (USER actions): <N sent>, replied-to / threads-closed: ...
+- Calendar: upcoming (next 2h): ..., recently-ended (past 2h): ...
+- Jira inbound: <N updates>, items: ...
+- Jira USER actions: <N transitions/comments by user>, items: ...
+- Confluence (user-authored): <N pages>, items: ...
+- Confluence (team on tracked projects): <N pages>, items: ...
+- Drive (USER actions): <N files modified by user>, folders: ..., code-extension bursts: ...
+- Drive (collaborators on your projects): <N files>, items: ...
+- Degraded/skipped: <list any sources that errored>
+```
 
-**Research is a core part of your job, not an afterthought.** You have access to your runtime's web search and web fetch capabilities (see AGENTS.md → Provider Adapter), plus Confluence pages, Jira tickets, and email threads. Use them. If you see something worth investigating — a meeting coming up, a thread that needs synthesis, a blocker that might have moved, a document someone shared — go read it and summarize it.
+If a source has nothing, write "nothing new". Do not write the checklist to a file — it's working memory for Phase 2. The point is to force breadth before depth.
 
-Don't just say "3 new replies in the thread" — read the thread and tell the user the conclusion. Don't just say "meeting in 1 hour" — read the agenda and prep the user. Don't just say "pipeline failed" — find out why.
+## 3. Phase 2 — Cross-source Correlation + Deep Dives
 
-The user reads your briefing to start their work. Make it so they can act immediately without needing to go dig through emails and tickets themselves.
+Now you have the full picture. Phase 2 is where you do the work that turns facts into insights: correlate across sources, compare against memory, dig deeper into the few findings that warrant it, and identify what's actually worth surfacing to the user.
 
-**Check workflows/**: If current activity matches a documented workflow, remind the user what step they're on and what comes next.
+### 3.1 Cross-source correlation (REQUIRED first step)
 
-**Budget**: Up to 5 web searches or page fetches per run. If you skip something, note why.
+Look across the Phase 1 facts for connections. Some examples of patterns to detect:
+
+- **Same entity in multiple sources**: a Jira ticket transitioned + a calendar meeting with the same person + a Drive file in the same project folder → "PROJ-X is the focus today, and the meeting at 11 is about the ticket that moved at 09:30".
+- **Cause-and-effect**: an inbound email asking a question + a sent email replying + a Jira comment recording the resolution → "you closed the loop on X with Y at HH:MM".
+- **Activity convergence**: Drive bursts in folder P + calendar block "PROJ-P work" + Jira ticket PROJ-P-456 → "this morning you're heads-down on PROJ-P".
+- **Quiet inversions**: someone tracked in `knowledge/active-context.md > Tracked People` who was active on other channels but didn't reply to the user's pending request — escalate that watchlist item.
+
+For each substantive correlation, draft a one-line insight (don't post yet; § 6 handles delivery). Correlations beat single-source facts because they tell the user something they couldn't see by scanning each tool individually.
+
+### 3.2 Memory recall comparison
+
+Read the `## Recalled Memories` section from the top of this prompt (if present — cognee-backed semantic recall from past daily logs / knowledge files). For each notable Phase 1 finding, ask:
+
+- "Does this match a pattern from past days?" (recurring blocker, weekly check-in cycle, ticket that bounces between states, a person who routinely goes silent on Mondays)
+- "Is this the Nth time this thing has surfaced this week?" — count occurrences if you can.
+- "Did the user say in feedback (`feedback.md > Feedback Log`) they were tired of hearing about this?" — if yes, suppress.
+
+If a current finding matches a pattern, frame the Mattermost line with the pattern: `Pattern: GN-1085 surfaced 3 days running — moving from observation to escalation if no transition by Friday.` This is the kind of cross-time insight memory recall is supposed to enable; use it.
+
+### 3.3 Deep dives (research budget: up to 5 fetches/searches)
+
+For the top 2-3 most important findings, follow up:
+
+- Read the full email thread (not just subject/snippet) when a thread is converging or contains a decision.
+- Read linked Jira ticket comments when the changelog shows a substantive update.
+- Fetch the referenced Confluence page or Drive doc when a meeting depends on it.
+- WebSearch when a technology / error / concept needs explaining (Snowflake docs, AWS errors, framework references).
+
+Spend the budget on findings that will MOVE THE USER — block them, unblock them, change their next hour's work. Skip research on findings that will just sit in the briefing.
+
+If you skip research on something noteworthy, note why in the daily log (e.g., "skipped: 3 web searches available, all spent on PROJ-X").
+
+**Check `workflows/`**: if current activity matches a documented workflow, remind the user which step they're on.
 
 ## 4. Update Watchlist
 
@@ -156,7 +198,19 @@ Keep the watchlist focused — only items where timing matters and the user migh
 
 ## 5. Write Outputs
 
-### Daily Log (append to `daily/YYYY-MM-DD.md`)
+### 5.1 Briefing stale-item purge (REQUIRED)
+
+Before writing new briefing content, sweep the existing `briefing.md` for items that are now obsolete. The briefing decays into noise within days if you don't aggressively prune. Remove or rewrite:
+
+- Meetings whose start time has passed (move to past, or delete if not noteworthy).
+- Deadlines that have passed (delete or mark "missed: <date>" if the user didn't act).
+- Tickets the user has acted on this run (delete — the Mattermost line will surface the action).
+- Items duplicated in current findings (consolidate into one).
+- Items older than 3 days with no movement (consider whether they're still real; if yes, demote to FYI; if no, delete).
+
+Note the count of items purged in the daily log: `Briefing purge: removed N stale items.`
+
+### 5.2 Daily Log (append to `daily/YYYY-MM-DD.md`)
 Add a section with this format (read the prompt hash from the Run Context section):
 ```
 ## HH:MM — Heartbeat [prompt:HASH]
@@ -181,8 +235,8 @@ Add a section with this format (read the prompt hash from the Run Context sectio
 [Items resolved, added, or marked stale]
 ```
 
-### Briefing (`briefing.md`)
-Always review the existing briefing for stale time-sensitive items (e.g., "happening now" for a past meeting, "upcoming in 1 hour" for something that already occurred). Remove or move these to FYI/past. Update if there are actionable items or stale entries to clean up. Structure:
+### 5.3 Briefing (`briefing.md`)
+Rewrite the briefing AFTER the purge in 5.1. Structure:
 ```
 # Briefing — YYYY-MM-DD HH:MM
 
@@ -227,9 +281,20 @@ For each candidate finding from Step 2-4 (sources scanned + research), decide:
 
 When in doubt, surface it. The user can mute the channel or filter; what they can't do is conjure a missed finding.
 
-### 6b. Post each surfaced finding to Mattermost (one line each)
+### 6b. Pre-post self-check (REQUIRED before each Mattermost post)
 
-For every finding worth surfacing, invoke separately:
+For EACH candidate line you've drafted in 6a, run this gate before invoking the runner:
+
+1. **Suppression**: scan the last 6 hours of `daily/YYYY-MM-DD.md` for a `Mattermost sent:` line referencing the same ticket/thread/person/folder. If found and the situation has not materially changed (no new state, no new actor, no new value), **skip**. Log `Suppressed (already posted): <line>` in the daily log.
+2. **Novelty check**: is this actually NEW information for the user this run, or are you re-stating what they already know from prior heartbeats or the briefing? If it's a restatement, **skip**.
+3. **Actionability check**: does this finding tie to a specific action the user could take, or a state change worth knowing? If it's pure noise ("Newsletter from X arrived"), **skip**.
+4. **Consolidation check**: does this line overlap with another line you're about to post? If yes, combine them into one richer line. Two thin lines about the same project are worse than one combined line.
+
+Only lines that pass all four checks proceed to 6c.
+
+### 6c. Post each surfaced finding to Mattermost (one line each)
+
+For every finding that passed 6b, invoke separately:
 
 ```bash
 python3 runner/maestro.py mattermost --urgent "<one-line summary, ≤240 chars>"
@@ -240,14 +305,24 @@ The runner posts inline via `lib/mattermost.py`. One finding = one runner invoca
 - `[<TICKET>] <what changed, why it matters>`
 - `Suggest: <action> on <TICKET> — <reason>`
 - `Decision: <one-line summary> (<who>, <when>)`
-- `Pattern: <observation>`
+- `Pattern: <observation>` (use this when 3.2 memory recall surfaced a recurring pattern)
 - `Done: <briefing item> — <how detected>`
+- `Drive: <N> edits in <FOLDER> — active coding on <PROJECT>`
 
-**Suppression**: before invoking the runner, scan the last 6 hours of `daily/YYYY-MM-DD.md` for a `Mattermost sent:` line referencing the same ticket/thread/person. If found and the situation has not materially changed (no new state, no new actor), skip the post.
+**Logging**: after each successful runner invocation (exit 0), append `Mattermost sent: <one-line summary> (<entity-id>)` to today's daily log so the next run's 6b suppression check can find it.
 
-**Logging**: after each successful runner invocation (exit 0), append `Mattermost sent: <one-line summary> (<entity-id>)` to today's daily log so the next run's suppression check can find it.
+### 6d. Drive feedback loop (untracked active folders)
 
-### 6c. Gmail draft (only if you produced long-form synthesis)
+If Phase 1 Drive scan flagged an UNTRACKED active folder (multiple recent edits in a folder NOT mentioned in `knowledge/active-context.md`):
+
+1. Draft a proposed addition to `knowledge/active-context.md` capturing the folder name, the activity pattern detected (N file edits, file extensions, time window), and a placeholder for the project's role / tracked status.
+2. Write the proposed edit to a holding file at `.tmp/active-context-suggestion-<YYYY-MM-DD-HH>.md` (the agent's writable surface). Format: full proposed text block, ready to copy-paste into `knowledge/active-context.md`.
+3. Post a Mattermost line asking for confirmation:
+   `Drive: untracked active folder <FOLDER> (<N> edits, <extensions>) — proposed active-context.md addition at .tmp/active-context-suggestion-<TIMESTAMP>.md. Reply "add" or edit + apply manually.`
+
+Do NOT directly modify `knowledge/active-context.md` for new project tracking — the user must confirm. (The agent can still modify active-context.md for routine updates like status changes on already-tracked items.)
+
+### 6e. Gmail draft (only if you produced long-form synthesis)
 
 Most heartbeats: skip this step entirely. The Mattermost lines ARE the delivery.
 
@@ -267,7 +342,7 @@ Defense in depth:
 - No CC, no BCC, no other recipients. Ever.
 - Use plain text or light markdown in the body — no HTML.
 
-### 6d. Graceful degradation
+### 6f. Graceful degradation
 
 If Mattermost delivery fails (runner exits non-zero with HTTP error), the runner preserves the unsent line in `.tmp/mattermost_urgent.txt`. Note the failure in the daily log: `Mattermost delivery failed (<reason>); finding preserved in .tmp/ for next-run retry: <summary>`. Do not re-attempt within this run.
 
