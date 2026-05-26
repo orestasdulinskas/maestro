@@ -297,7 +297,7 @@ Only lines that pass all four checks proceed to 6c.
 For every finding that passed 6b, invoke separately:
 
 ```bash
-python3 runner/maestro.py mattermost --urgent "<one-line summary, ≤240 chars>"
+python3 runner/maestro.py mattermost --urgent "<short, scannable summary — aim 1-3 sentences; no hard limit but anything multi-paragraph should be a Gmail draft instead>"
 ```
 
 The runner posts inline via `lib/mattermost.py`. One finding = one runner invocation = one Mattermost line in the channel feed. Line shape patterns (see AGENTS.md → Output Formats for examples):

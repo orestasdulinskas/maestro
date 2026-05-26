@@ -239,8 +239,13 @@ def cmd_mattermost(args: argparse.Namespace) -> int:
     if not line:
         sys.stderr.write("runner mattermost: --urgent message is empty; refusing.\n")
         return 2
-    if len(line) > 240:
-        line = line[:237] + "..."
+    # Sanity-only hard cap (anti-runaway). The prompts give a soft target of
+    # "short and scannable" but allow longer when context matters. Anything
+    # over this threshold is a sign the content should be a Gmail draft, not
+    # a Mattermost line. Truncation here is the safety net, not the design.
+    HARD_CAP_CHARS = 1500
+    if len(line) > HARD_CAP_CHARS:
+        line = line[:HARD_CAP_CHARS - 3] + "..."
 
     TMP_DIR.mkdir(exist_ok=True)
     marker = TMP_DIR / "mattermost_urgent.txt"
@@ -629,7 +634,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--append", action="store_true")
 
     sp = sub.add_parser("mattermost", help="Deliver an urgent Mattermost line (inline by default)")
-    sp.add_argument("--urgent", required=True, help="One-line summary (max 240 chars)")
+    sp.add_argument("--urgent", required=True, help="Mattermost message (sanity cap ~1500 chars)")
     sp.add_argument("--stage-only", action="store_true",
                     help="Stage to .tmp/ only; skip inline delivery (legacy flow)")
     sp.add_argument("--deliver", action="store_true",

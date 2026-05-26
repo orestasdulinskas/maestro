@@ -64,7 +64,7 @@ AWS credentials and bucket config are already in the environment.
      sources, synthesize, update watchlist, append daily log, rewrite briefing.
    - **For each substantive finding** (decisions, ticket transitions, blockers,
      suggested Jira actions, pattern-breaks), invoke
-       python3 runner/maestro.py mattermost --urgent "<one-line summary, ≤240 chars>"
+       python3 runner/maestro.py mattermost --urgent "<short, scannable summary; no hard char limit but aim for 1-3 sentences>"
      One invocation per finding. No cap; trust your judgment. Apply the 6h
      suppression rule (don't re-post the same entity).
    - **Only if you produced long-form synthesis** (>200-word research write-up,

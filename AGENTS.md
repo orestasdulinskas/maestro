@@ -20,7 +20,7 @@ Everything the agent produces beyond operational bookkeeping goes to the user vi
 - **Gmail draft** is for long-form synthesis only. Multi-paragraph output meant to be read as a document, not scanned as a feed. End-of-day summary, Friday weekly summary, Friday self-assessment, and research write-ups longer than ~200 words go here.
 
 The agent picks the channel per output based on form factor:
-- **One line, scannable, ≤240 chars**: Mattermost via `python3 runner/maestro.py mattermost --urgent "…"`.
+- **Short, scannable** (aim 1-3 sentences; no hard char limit; runner sanity cap 1500): Mattermost via `python3 runner/maestro.py mattermost --urgent "…"`.
 - **Multiple paragraphs, headings, code blocks, tables**: Gmail draft via `runner/maestro.py send-email` + `gmail_create_draft`.
 
 If a heartbeat produces both (e.g., 5 findings + 1 multi-paragraph research synthesis), post the 5 findings to Mattermost AND create one Gmail draft for the research. They're independent surfaces.
@@ -196,7 +196,7 @@ The agent produces two kinds of output. Each has a specific shape.
 
 ### Mattermost line format (primary channel)
 
-One line per substantive finding. Each delivered via a separate `runner mattermost --urgent "…"` invocation. The runner enforces a ≤240 char hard cap per line.
+One line per substantive finding via a separate `runner mattermost --urgent "…"` invocation. Aim scannable (1-3 sentences); no fixed char limit. Runner sanity cap at 1500 — content that long belongs in a Gmail draft.
 
 Patterns:
 - `[<TICKET>] <one-sentence what changed and why it matters>`
@@ -277,11 +277,11 @@ Subject: [Heartbeat] EOD — [date]
 
 ### EOD Mattermost teaser
 
-After the EOD draft is staged in Gmail, post one Mattermost line summarizing it so the user knows to check drafts:
+After the EOD draft is staged, post one Mattermost line so the user knows to check drafts. Format:
 
-`[EOD <YYYY-MM-DD>] Draft ready — top: <one-sentence headline finding>. <N> open items carried to tomorrow.`
+`[EOD <YYYY-MM-DD>] Draft ready — top: <one-sentence headline>. <N> open items carried to tomorrow.`
 
-This is the only Mattermost output from the EOD run. The full review lives in the Gmail draft for considered reading.
+Only Mattermost output from EOD; full review lives in the draft.
 
 ## File Conventions
 
