@@ -47,10 +47,14 @@ You are running as the Maestro hourly heartbeat in a remote routine. You start
 in a fresh clone of the maestro repo (working directory is the repo root).
 AWS credentials and bucket config are already in the environment.
 
-1. Pull Mattermost secrets into env vars (read-only Secrets Manager call):
-     bash> eval "$(python3 runner/maestro.py secrets pull --shell)"
-   This loads MATTERMOST_BASE_URL, MATTERMOST_BOT_TOKEN, etc. for later
-   mattermost delivery via lib/mattermost.py.
+1. Pull Mattermost secrets and save them to a sourceable file (cloud Bash
+   tool calls are each a fresh shell — env vars don't persist between
+   invocations, so `eval` would leak. Write to file once, source per call):
+     bash> python3 runner/maestro.py secrets pull --shell > .tmp/.env.runtime
+     bash> chmod 600 .tmp/.env.runtime
+   This file is in the sandbox's ephemeral working tree — destroyed at
+   run end. Each subsequent `runner mattermost` invocation must
+   `source` this file in its own Bash call (see step 3).
 
 2. Pull operational state from S3:
      bash> python3 runner/maestro.py state pull
@@ -63,10 +67,12 @@ AWS credentials and bucket config are already in the environment.
    - Execute one heartbeat cycle exactly as specified — load context, check
      sources, synthesize, update watchlist, append daily log, rewrite briefing.
    - **For each substantive finding** (decisions, ticket transitions, blockers,
-     suggested Jira actions, pattern-breaks), invoke
-       python3 runner/maestro.py mattermost --urgent "<short, scannable summary; no hard char limit but aim for 1-3 sentences>"
+     suggested Jira actions, pattern-breaks), invoke in a SINGLE Bash call
+     (source the env file first — each Bash call is a fresh shell):
+       source .tmp/.env.runtime && python3 runner/maestro.py mattermost --urgent "<short, scannable summary; no hard char limit but aim for 1-3 sentences>"
      One invocation per finding. No cap; trust your judgment. Apply the 6h
-     suppression rule (don't re-post the same entity).
+     suppression rule (don't re-post the same entity). Without sourcing first,
+     the runner fails with "missing env var MATTERMOST_BASE_URL".
    - **Only if you produced long-form synthesis** (>200-word research write-up,
      full multi-paragraph meeting notes, EOD-style summary), stage via
        python3 runner/maestro.py send-email --subject "..." --body "..."

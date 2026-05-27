@@ -294,10 +294,15 @@ Only lines that pass all four checks proceed to 6c.
 
 ### 6c. Post each surfaced finding to Mattermost (one line each)
 
-For every finding that passed 6b, invoke separately:
+For every finding that passed 6b, invoke separately in a SINGLE Bash call (each Bash tool call is a fresh shell — env vars from a prior `eval secrets pull` won't persist, so source the saved env file first):
 
 ```bash
-python3 runner/maestro.py mattermost --urgent "<short, scannable summary — aim 1-3 sentences; no hard limit but anything multi-paragraph should be a Gmail draft instead>"
+source .tmp/.env.runtime && python3 runner/maestro.py mattermost --urgent "<short, scannable summary — aim 1-3 sentences; no hard limit but anything multi-paragraph should be a Gmail draft instead>"
+```
+
+If `.tmp/.env.runtime` doesn't exist (first runner-mattermost call of the run), create it first:
+```bash
+python3 runner/maestro.py secrets pull --shell > .tmp/.env.runtime && source .tmp/.env.runtime && python3 runner/maestro.py mattermost --urgent "..."
 ```
 
 The runner posts inline via `lib/mattermost.py`. One finding = one runner invocation = one Mattermost line in the channel feed. Line shape patterns (see AGENTS.md → Output Formats for examples):
