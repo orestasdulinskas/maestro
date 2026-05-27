@@ -281,6 +281,18 @@ def cmd_mattermost(args: argparse.Namespace) -> int:
         return 0
     result = shell_out([sys.executable, str(mattermost_py), "send-file", str(marker)])
     sys.stdout.write(result.stdout)
+
+    # Always clear the marker after an inline-delivery attempt. On success,
+    # send-file already unlinks it; on failure, send-file rewrites it with
+    # the unsent lines (designed for the legacy run.sh post-run retry path).
+    # For inline-delivery, that preserve-on-failure behavior actively creates
+    # duplicates: the agent's retry calls `runner mattermost --urgent "X"`
+    # again, which appends "X" to the marker that already has "X" preserved,
+    # so the next send-file call posts both. Clear the marker here so each
+    # `runner mattermost` invocation is atomic w.r.t. the marker file.
+    if marker.exists():
+        marker.unlink()
+
     if result.returncode != 0:
         sys.stderr.write(result.stderr)
         return result.returncode
