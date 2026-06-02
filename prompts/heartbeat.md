@@ -16,7 +16,15 @@ Follow all data safety rules from AGENTS.md (injection detection, file write res
 
 User feedback can arrive via three channels. Check all three at run start; apply immediately during this run; log each piece to `feedback.md > Feedback Log` (per AGENTS.md `feedback.md` rules).
 
-**a. Mattermost feedback** — If the Run Context contains a `## Recent Mattermost Feedback` block (the orchestration layer injects this when `lib/mattermost.py` fetched new posts in the configured channel since `cached.last_seen_mattermost_message_ts`), each entry is a message the user posted to the agent. Treat each as direct instruction. Note: cloud runtimes may not yet have Mattermost polling wired — the block will simply be absent in that case.
+**a. Mattermost feedback** — Fetch the user's recent posts in the configured channel. Each Bash tool call is a fresh shell, so source the env file first (same pattern as the runner-mattermost invocations):
+
+```bash
+source .tmp/.env.runtime && python3 lib/mattermost.py fetch-recent
+```
+
+This prints a `## Recent Mattermost Feedback` Markdown block to stdout containing every user-side post since `state.json > cached.last_seen_mattermost_message_ts` (filters out the bot's own posts and system messages), then advances the watermark on success. If the user posted anything since the last heartbeat, treat each entry as a direct instruction.
+
+**This is high-priority.** When the user takes the time to reply in Mattermost ("add demo_agent to watchlist", "stop tracking X", "great call on Y"), they expect the agent to act on it THIS run — not next run, not "I'll consider it". Read the messages first, before any source scan.
 
 **b. Email replies** — Search Gmail for replies to past `[Heartbeat]` threads:
 - Search: `subject:"Re: [Heartbeat]" from:me after:EPOCH` (use last-run timestamp from Run Context, or `newer_than:1h` as fallback)
@@ -170,18 +178,24 @@ Read the `## Recalled Memories` section from the top of this prompt (if present 
 
 If a current finding matches a pattern, frame the Mattermost line with the pattern: `Pattern: GN-1085 surfaced 3 days running — moving from observation to escalation if no transition by Friday.` This is the kind of cross-time insight memory recall is supposed to enable; use it.
 
-### 3.3 Deep dives (research budget: up to 5 fetches/searches)
+### 3.3 Deep dives (research budget: up to 8 fetches/searches)
 
-For the top 2-3 most important findings, follow up:
+Be **aggressive** here. Most heartbeats underuse this budget — research that saves the user 5 minutes is worth far more than the cost of one WebFetch. Spend the budget freely on findings that will move the user.
 
-- Read the full email thread (not just subject/snippet) when a thread is converging or contains a decision.
-- Read linked Jira ticket comments when the changelog shows a substantive update.
-- Fetch the referenced Confluence page or Drive doc when a meeting depends on it.
-- WebSearch when a technology / error / concept needs explaining (Snowflake docs, AWS errors, framework references).
+For the top 3-4 findings, follow up:
+
+- **Read the full email thread** (not just subject/snippet) when a thread is converging, contains a decision, or has more than 2 replies.
+- **Read Jira ticket comments** when the changelog shows a substantive update — the comment usually explains the WHY behind the transition.
+- **Fetch the referenced Confluence page or Drive doc** when a meeting agenda mentions it, or when a ticket links to it.
+- **WebSearch** when ANY of these appear: a new technology / library / framework name you don't recognize, an error code in a Jira ticket or Confluence page, a vendor/product launch the user mentions, an acronym you can't expand, a recurring pattern that might have a known name (e.g., "circuit breaker", "saga pattern"), a regulatory term, a date-bound deadline (search for what's happening that day).
+- **Proactive suggestions** — for every actionable finding, draft a concrete next-step:
+  - For a stuck Jira ticket, draft the comment text the user could post to unblock it.
+  - For a missing approval, identify who could give it and draft the ask.
+  - For an outdated Confluence page tied to active work, suggest the section that needs updating.
 
 Spend the budget on findings that will MOVE THE USER — block them, unblock them, change their next hour's work. Skip research on findings that will just sit in the briefing.
 
-If you skip research on something noteworthy, note why in the daily log (e.g., "skipped: 3 web searches available, all spent on PROJ-X").
+If you skip research on something noteworthy, note why in the daily log (e.g., "skipped: 5 web searches available, all spent on PROJ-X").
 
 **Check `workflows/`**: if current activity matches a documented workflow, remind the user which step they're on.
 
@@ -305,12 +319,31 @@ If `.tmp/.env.runtime` doesn't exist (first runner-mattermost call of the run), 
 python3 runner/maestro.py secrets pull --shell > .tmp/.env.runtime && source .tmp/.env.runtime && python3 runner/maestro.py mattermost --urgent "..."
 ```
 
-The runner posts inline via `lib/mattermost.py`. One finding = one runner invocation = one Mattermost line in the channel feed. Line shape patterns (see AGENTS.md → Output Formats for examples):
+The runner posts inline via `lib/mattermost.py`. One finding = one runner invocation = one Mattermost message in the channel feed.
 
-- `[<TICKET>] <what changed, why it matters>`
-- `Suggest: <action> on <TICKET> — <reason>`
-- `Decision: <one-line summary> (<who>, <when>)`
-- `Pattern: <observation>` (use this when 3.2 memory recall surfaced a recurring pattern)
+**Formatting (important — readability matters):**
+
+Mattermost renders markdown. **Use bullet structure for multi-fact messages.** Dense prose paragraphs are hard to scan on mobile.
+
+- **Single-fact message** → one line, no bullets needed:
+  - `[PROJ-456] ✓ Security approved SCIM at 14:22 — Maria unblocked.`
+- **Multi-fact message** → headline line + bulleted sub-facts:
+  ```
+  [PROJ-456] MR !104 dev→stg MERGED 13:46
+  - 4th MR same branch lineage today
+  - GN-1196 now on staging
+  - GENIM-685 std-change deploy stg→prod remains
+  - Emilija's aggressive close-out continues
+  ```
+- Use **bold** to highlight the entity or action: `**[PROJ-456]**` or `**Decision:**`.
+- Light emoji where it carries meaning: 🔥 for urgency, ✓ for done/resolved, ⚠ for risk/warning, ⏰ for time-critical. Skip decorative emoji.
+
+Line shape patterns (see AGENTS.md → Output Formats for examples):
+
+- `**[<TICKET>]** <what changed, why it matters>`
+- `**Suggest:** <action> on <TICKET> — <reason>`
+- `**Decision:** <one-line summary> (<who>, <when>)`
+- `**Pattern:** <observation>` (use when § 3.2 memory recall surfaced a recurring pattern)
 - `Done: <briefing item> — <how detected>`
 - `Drive: <N> edits in <FOLDER> — active coding on <PROJECT>`
 
