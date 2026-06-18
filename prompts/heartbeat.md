@@ -72,6 +72,28 @@ Search for emails the user sent since the last heartbeat:
 - Cross-reference each sent email against watchlist + briefing — if the user replied to a tracked item, mark it **acted on**, resolve the watchlist entry, drop it from the briefing.
 - Post a Mattermost line if the sent email represents a meaningful action (e.g., `You replied to PROJ-456 thread at 11:42 — closed the security question with Maria`).
 
+### Mattermost — user inbox (DMs + channels you receive in)
+
+This is **distinct from § 1.1.a Mattermost feedback** — that step reads user replies in the MAESTRO channel only. This step reads the user's broader Mattermost world: direct messages, group DMs, team channels they're a member of. The MAESTRO channel is excluded by default to avoid re-surfacing the agent's own outbound.
+
+Authentication uses the user's personal access token (`MATTERMOST_TOKEN`), not the bot token. Source env first, then call `lib/mattermost_inbox.py` with a window matching the time since last heartbeat:
+
+```bash
+source .tmp/.env.runtime && python3 lib/mattermost_inbox.py --since 1h --json
+```
+
+Use `--since 1h` for normal hourly cadence; use a wider window (`--since 1d`, `--since 3d`) if the Run Context shows catch-up mode (long gap since last run). The JSON output is grouped by conversation (DM or channel) with messages in chronological order.
+
+Treat each conversation as a signal source:
+- **DM from a tracked person** → high attention (they're reaching out directly). Read message content, cross-reference with watchlist + active-context.
+- **Channel mention or reply tagged with your username** → moderately high attention.
+- **Substantive activity in a tracked channel** → check whether it relates to active projects.
+- **Random off-topic chatter** → skip.
+
+If the inbox is empty (no messages since last run), log `Mattermost inbox: nothing new` and move on.
+
+If the script errors (likely `MATTERMOST_TOKEN missing` if the user hasn't added their PAT to AWS Secrets Manager yet), log the failure and continue with other sources. Don't block the heartbeat on inbox.
+
 ### Google Calendar
 Try the Calendar list-events capability (MCP function `google_calendar-list-events`) first to list events for the next 2 hours and events that ended in the past 2 hours. If the Calendar capability is UNAVAILABLE, fall back to Gmail invite search:
 - **Fallback**: Gmail search with query `has:invite after:EPOCH` to find calendar invite emails
@@ -141,6 +163,7 @@ Before proceeding to Phase 2, you MUST have notes in your working memory coverin
 Phase 1 facts gathered:
 - Gmail inbound: <N new>, key items: <subject/sender>, ...
 - Gmail sent (USER actions): <N sent>, replied-to / threads-closed: ...
+- Mattermost inbox: <N conversations active>, DMs from: ..., channels with mentions: ...
 - Calendar: upcoming (next 2h): ..., recently-ended (past 2h): ...
 - Jira inbound: <N updates>, items: ...
 - Jira USER actions: <N transitions/comments by user>, items: ...

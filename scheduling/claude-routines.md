@@ -7,7 +7,7 @@ Anthropic Remote Routines (`RemoteTrigger`) run Maestro on a cron schedule insid
 - MCP connectors configured at https://claude.ai/customize/connectors. **Minimum**: claude.ai's Gmail (read + create-draft) and Google Calendar (read). **Optional**: Atlassian (Jira + Confluence), Pipedream (Google Drive, or Gmail direct-send if you want to skip the draft-review step).
 - A dedicated Anthropic cloud **environment** with AWS credentials in its env vars (see below). The runner uses these directly via `boto3` — no AWS MCP connector required.
 - S3 bucket for state (`maestro-state-<you>`) with versioning enabled.
-- AWS Secrets Manager entry `maestro/mattermost` with the Mattermost env vars as a JSON blob.
+- AWS Secrets Manager entry `maestro/mattermost` with the Mattermost env vars as a JSON blob. Keys: bot creds (`MATTERMOST_BOT_TOKEN`, `MATTERMOST_BOT_USER_ID`, `MATTERMOST_CHANNEL_ID`, `MATTERMOST_BASE_URL`, etc.) plus the user's personal access token `MATTERMOST_TOKEN` for `lib/mattermost_inbox.py` to read the user's DMs/channels (distinct from the bot's writes).
 - Dedicated IAM user (e.g. `maestro-routine`) with a scoped policy: `secretsmanager:GetSecretValue` + `DescribeSecret` on `arn:aws:secretsmanager:*:*:secret:maestro/*`; `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject`/`s3:ListBucket` on the bucket. Programmatic access keys for this user go into the environment config.
 
 ## Anthropic cloud environment setup
