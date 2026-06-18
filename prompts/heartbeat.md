@@ -84,6 +84,8 @@ source .tmp/.env.runtime && python3 lib/mattermost_inbox.py --since 1h --json
 
 Use `--since 1h` for normal hourly cadence; use a wider window (`--since 1d`, `--since 3d`) if the Run Context shows catch-up mode (long gap since last run). The JSON output is grouped by conversation (DM or channel) with messages in chronological order.
 
+**NEVER pass `--include-maestro`.** The MAESTRO channel is the bot's own outbound — reading it via the user PAT would surface YOUR previous Mattermost posts as if they were new user-side context, causing a self-referential noise loop where the agent "discovers" findings it had already posted. § 1.1.a (which uses the bot token and filters out bot-authored posts) is the correct path for reading user replies in the MAESTRO channel.
+
 Treat each conversation as a signal source:
 - **DM from a tracked person** → high attention (they're reaching out directly). Read message content, cross-reference with watchlist + active-context.
 - **Channel mention or reply tagged with your username** → moderately high attention.
