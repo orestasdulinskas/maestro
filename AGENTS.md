@@ -414,7 +414,8 @@ When in doubt, consult `providers/<runtime>.md`.
 ### Provider-specific notes
 
 - **Claude Code + Anthropic Routines**: claude.ai-side Gmail connector includes draft creation (`gmail_create_draft`) — that's the default delivery mode for long-form output. Pipedream `gmail-send-email` is opt-in only.
-- **Anthropic Routines**: sandbox can't `git push` back. State persists via S3 (`runner state pull/push`). Secrets via AWS Secrets Manager (`runner secrets pull`). AWS credentials come from the routine's environment env-vars, not an MCP connector.
+- **Anthropic Routines**: sandbox can't `git push` back. State persists via S3 (`runner state pull/push`). Secrets via AWS Secrets Manager (`runner secrets pull`). AWS credentials come from the routine environment's `MAESTRO_AK` / `MAESTRO_SK` variables, which the runner passes to boto3 itself (see "AWS credentials" in `runner/maestro.py`). The agent never exports, prints, or inspects credential or environment variables; every AWS call goes through `runner/maestro.py`.
+- **Anthropic Routines connector names**: the Gmail connector is attached as `Gmail`, so its tools are `mcp__Gmail__search_threads`, `mcp__Gmail__get_thread`, `mcp__Gmail__create_draft`, etc. Load them with ToolSearch before first use. Calendar is `mcp__Google-Calendar__*`, Drive `mcp__Google-Drive__*`, Atlassian `mcp__Atlassian-MCP__*`.
 - **Codex CLI**: AGENTS.md is capped at 32 KiB — this file is sized to fit.
 - **opencode**: reads AGENTS.md natively; project MCP in `opencode.json`.
 - **deep-agents**: AGENTS.md + SKILL.md pattern.

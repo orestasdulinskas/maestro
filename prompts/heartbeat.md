@@ -235,6 +235,8 @@ Review `knowledge/watchlist.md` and update it:
 
 Keep the watchlist focused — only items where timing matters and the user might forget. Don't track routine things.
 
+**Size guard**: update entries in place; never append a new entry for an item that already has one. If `knowledge/watchlist.md` is over 400 lines after your edits, move every resolved entry to `knowledge/resolved-archive.md` (one line each: `- YYYY-MM-DD: [item] — resolved: [how]`) and delete it from the watchlist, then trim each remaining entry's update history to its latest 3 updates. Note the compaction in the daily log.
+
 ## 5. Write Outputs
 
 ### 5.1 Briefing stale-item purge (REQUIRED)

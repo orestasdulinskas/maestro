@@ -10,8 +10,10 @@ opencode, deep-agents, and Anthropic Remote Routines):
     mattermost           Deliver an urgent Mattermost line (cap-enforced).
     send-email           Stage an email payload; the runtime delivers it via its
                          gmail-send capability. Recipient is locked to config.json.
+    preflight            Check the run window (local time) and the AWS identity.
+    start                Record run-start in state.json (pairs with finalize).
     state pull|push      Sync operational-state files to/from the configured backend
-                         (S3 via AWS MCP/boto3/CLI, or local ~/.maestro/).
+                         (S3 via boto3/CLI, or local ~/.maestro/).
     secrets pull         Fetch maestro/* secrets from AWS Secrets Manager into env.
     auth                 Print which subsystems are configured (S3/secrets/Mattermost).
 
@@ -26,12 +28,14 @@ runner's role is to validate, persist, and gate side effects.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # ── Paths ────────────────────────────────────────────────────────
@@ -115,6 +119,53 @@ def shell_out(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
 
+# ── AWS credentials ─────────────────────────────────────────────
+#
+# Anthropic cloud sandboxes preset AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY to
+# a placeholder ("proxy-injected") and do not pass AWS_* credential variables
+# through from the environment config. The routine environment therefore stores
+# the maestro-routine key as MAESTRO_AK / MAESTRO_SK, and the runner hands them
+# to boto3 / the AWS CLI here, in code. Prompts never handle credentials and
+# never need to export or print them.
+#
+# When MAESTRO_AK / MAESTRO_SK are unset (local runs), the default AWS
+# credential chain applies unchanged.
+
+
+def aws_region() -> str | None:
+    # boto3 reads AWS_DEFAULT_REGION, the AWS CLI reads AWS_REGION; accept both.
+    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+
+
+def _maestro_aws_creds() -> dict | None:
+    ak = os.environ.get("MAESTRO_AK")
+    sk = os.environ.get("MAESTRO_SK")
+    if ak and sk:
+        return {"aws_access_key_id": ak, "aws_secret_access_key": sk}
+    return None
+
+
+def aws_client(service: str):
+    import boto3
+    creds = _maestro_aws_creds() or {}
+    return boto3.session.Session(region_name=aws_region(), **creds).client(service)
+
+
+def aws_cli_env() -> dict:
+    """Environment for `aws` CLI subprocesses, with the maestro key applied."""
+    env = os.environ.copy()
+    creds = _maestro_aws_creds()
+    if creds:
+        env["AWS_ACCESS_KEY_ID"] = creds["aws_access_key_id"]
+        env["AWS_SECRET_ACCESS_KEY"] = creds["aws_secret_access_key"]
+        env.pop("AWS_SESSION_TOKEN", None)
+        env.pop("AWS_PROFILE", None)
+    region = aws_region()
+    if region:
+        env.setdefault("AWS_DEFAULT_REGION", region)
+    return env
+
+
 # ── Subcommand: prepare ─────────────────────────────────────────
 
 
@@ -151,6 +202,78 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── Subcommand: preflight ───────────────────────────────────────
+
+
+PREFLIGHT_SKIP = 10  # exit code: outside the run window, stop without doing anything
+
+
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Gate a scheduled run before it touches anything.
+
+    1. --window HH-HH: skip (exit 10) unless the local hour in --tz is inside
+       the inclusive window. Lets a UTC cron cover both DST offsets while the
+       run itself keeps a fixed local window.
+    2. AWS identity (s3 backend only): STS GetCallerIdentity must succeed and,
+       if --expect-identity is given, the ARN must end with it.
+    """
+    if args.window:
+        m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", args.window)
+        if not m:
+            sys.stderr.write(f"runner preflight: --window must look like 08-18, got '{args.window}'.\n")
+            return 2
+        start_h, end_h = int(m.group(1)), int(m.group(2))
+        from zoneinfo import ZoneInfo
+        local_now = datetime.now(ZoneInfo(args.tz))
+        if not start_h <= local_now.hour <= end_h:
+            sys.stdout.write(
+                f"preflight: SKIP - {local_now:%H:%M} {args.tz} is outside the "
+                f"{start_h:02d}:00-{end_h:02d}:59 window. Stop the run now.\n"
+            )
+            return PREFLIGHT_SKIP
+        sys.stdout.write(f"preflight: window OK ({local_now:%a %H:%M} {args.tz}).\n")
+
+    if state_backend() == "s3":
+        if not have_boto3():
+            sys.stderr.write("runner preflight: boto3 is not installed.\n")
+            return 2
+        try:
+            arn = aws_client("sts").get_caller_identity()["Arn"]
+        except Exception as e:
+            sys.stderr.write(f"runner preflight: AWS identity check failed: {type(e).__name__}: {e}\n")
+            return 3
+        if args.expect_identity and not arn.endswith(args.expect_identity):
+            sys.stderr.write(
+                f"runner preflight: AWS identity is {arn}, expected one ending in "
+                f"'{args.expect_identity}'.\n"
+            )
+            return 3
+        sys.stdout.write(f"preflight: AWS OK ({arn}).\n")
+    return 0
+
+
+# ── Subcommand: start ───────────────────────────────────────────
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    """Record run-start (started_at, prompt hash, run counter) in state.json.
+
+    Run after `state pull` so it updates the pulled file, and pair it with
+    `finalize` before `state push` so both timestamps reach the backend.
+    """
+    prompt_file = ROOT / "prompts" / ("end-of-day.md" if args.run_type == "eod" else "heartbeat.md")
+    prompt_hash = "none"
+    if prompt_file.exists():
+        prompt_hash = hashlib.sha256(prompt_file.read_bytes()).hexdigest()[:8]
+    result = shell_out([sys.executable, str(LIB / "state.py"), "run-start", args.run_type,
+                        "--prompt-hash", prompt_hash])
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        return result.returncode
+    sys.stdout.write(f"start: {args.run_type} run started [prompt:{prompt_hash}]\n")
+    return 0
+
+
 # ── Subcommand: finalize ────────────────────────────────────────
 
 
@@ -163,6 +286,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     if result.returncode != 0:
         sys.stderr.write(result.stderr)
         return result.returncode
+    sys.stdout.write(f"finalize: {args.run_type} run complete (exit code {args.exit_code}).\n")
 
     # Re-index memory in the background after a successful heartbeat (skip on EOD
     # since EOD typically follows a heartbeat).
@@ -417,7 +541,7 @@ def cmd_state(args: argparse.Namespace) -> int:
     if backend == "local":
         return _state_local(args.action)
     if backend == "s3":
-        return _state_s3(args.action)
+        return _state_s3(args.action, args.daily_days)
     sys.stderr.write(f"runner state: unknown backend '{backend}'. Use 's3' or 'local'.\n")
     return 2
 
@@ -448,77 +572,118 @@ def _state_local(action: str) -> int:
     return 0
 
 
-def _state_s3(action: str) -> int:
+def _state_s3(action: str, daily_days: int) -> int:
     bucket = state_bucket()
+    if have_boto3():
+        return _state_s3_via_boto3(action, bucket, daily_days)
     if have_aws_cli():
         return _state_s3_via_cli(action, bucket)
-    if have_boto3():
-        return _state_s3_via_boto3(action, bucket)
     sys.stderr.write(
-        "runner state: backend=s3 but neither `aws` CLI nor `boto3` is available. "
+        "runner state: backend=s3 but neither `boto3` nor the `aws` CLI is available. "
         "Install one, or set MAESTRO_STATE_BACKEND=local.\n"
     )
     return 2
 
 
 def _state_s3_via_cli(action: str, bucket: str) -> int:
+    """Fallback full sync. `aws s3 sync` already skips unchanged files."""
+    env = aws_cli_env()
+    failed = False
     if action == "pull":
         for f in STATE_FILES:
-            shell_out(["aws", "s3", "cp", f"s3://{bucket}/{f}", str(ROOT / f)])
+            shell_out(["aws", "s3", "cp", f"s3://{bucket}/{f}", str(ROOT / f)], env=env)
         for d in STATE_DIRS:
-            shell_out(["aws", "s3", "sync", f"s3://{bucket}/{d}/", str(ROOT / d / "")])
+            r = shell_out(["aws", "s3", "sync", f"s3://{bucket}/{d}/", str(ROOT / d / "")], env=env)
+            failed |= r.returncode != 0
     elif action == "push":
         for f in STATE_FILES:
             if (ROOT / f).exists():
-                shell_out(["aws", "s3", "cp", str(ROOT / f), f"s3://{bucket}/{f}"])
+                r = shell_out(["aws", "s3", "cp", str(ROOT / f), f"s3://{bucket}/{f}"], env=env)
+                failed |= r.returncode != 0
         for d in STATE_DIRS:
             if (ROOT / d).is_dir():
-                shell_out(["aws", "s3", "sync", str(ROOT / d / ""), f"s3://{bucket}/{d}/"])
-    sys.stderr.write(f"runner state {action} (s3 via CLI): bucket={bucket}\n")
-    return 0
+                r = shell_out(["aws", "s3", "sync", str(ROOT / d / ""), f"s3://{bucket}/{d}/"], env=env)
+                failed |= r.returncode != 0
+    sys.stderr.write(f"runner state {action} (s3 via CLI): bucket={bucket}{' FAILED' if failed else ''}\n")
+    return 1 if failed else 0
 
 
-def _state_s3_via_boto3(action: str, bucket: str) -> int:
-    import boto3
-    # boto3's default region resolution checks AWS_DEFAULT_REGION, not AWS_REGION
-    # (which is what the AWS CLI uses). Pass it explicitly so the runner works
-    # regardless of which env-var convention the runtime sets.
-    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-    s3 = boto3.client("s3", region_name=region)
+# Records the MD5 of every file as pulled, so push uploads only what changed.
+STATE_MANIFEST = TMP_DIR / "state-manifest.json"
+DAILY_LOG_RE = re.compile(r"^daily/(\d{4}-\d{2}-\d{2})\.md$")
+
+
+def _md5(path: Path) -> str:
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def _is_old_daily_log(key: str, cutoff: date | None) -> bool:
+    if cutoff is None:
+        return False
+    m = DAILY_LOG_RE.match(key)
+    return bool(m) and date.fromisoformat(m.group(1)) < cutoff
+
+
+def _state_s3_via_boto3(action: str, bucket: str, daily_days: int) -> int:
+    from botocore.exceptions import ClientError
+    s3 = aws_client("s3")
+
     if action == "pull":
+        # daily/YYYY-MM-DD.md older than `daily_days` stays in S3 (0 = pull all).
+        cutoff = date.today() - timedelta(days=daily_days) if daily_days > 0 else None
+        manifest: dict[str, str] = {}
+        keys: list[str] = []
         for f in STATE_FILES:
-            try:
-                s3.download_file(bucket, f, str(ROOT / f))
-            except Exception:
-                pass  # missing object is OK on first run
+            keys.append(f)
+        paginator = s3.get_paginator("list_objects_v2")
+        skipped = 0
         for d in STATE_DIRS:
-            _s3_sync_down_boto3(s3, bucket, d, ROOT / d)
-    elif action == "push":
-        for f in STATE_FILES:
-            if (ROOT / f).exists():
-                s3.upload_file(str(ROOT / f), bucket, f)
-        for d in STATE_DIRS:
-            if (ROOT / d).is_dir():
-                _s3_sync_up_boto3(s3, bucket, d, ROOT / d)
-    sys.stderr.write(f"runner state {action} (s3 via boto3): bucket={bucket}\n")
-    return 0
-
-
-def _s3_sync_down_boto3(s3, bucket: str, prefix: str, local_dir: Path) -> None:
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/"):
-        for obj in page.get("Contents", []) or []:
-            key = obj["Key"]
+            for page in paginator.paginate(Bucket=bucket, Prefix=f"{d}/"):
+                for obj in page.get("Contents", []) or []:
+                    if _is_old_daily_log(obj["Key"], cutoff):
+                        skipped += 1
+                    else:
+                        keys.append(obj["Key"])
+        for key in keys:
             dest = ROOT / key
             dest.parent.mkdir(parents=True, exist_ok=True)
-            s3.download_file(bucket, key, str(dest))
+            try:
+                s3.download_file(bucket, key, str(dest))
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+                    continue  # top-level file not created yet (first run)
+                sys.stderr.write(f"runner state pull: failed to download {key}: {e}\n")
+                return 1
+            manifest[key] = _md5(dest)
+        TMP_DIR.mkdir(exist_ok=True)
+        STATE_MANIFEST.write_text(json.dumps(manifest), encoding="utf-8")
+        sys.stderr.write(
+            f"runner state pull (s3 via boto3): bucket={bucket} files={len(manifest)} "
+            f"older_daily_logs_left_in_s3={skipped}\n"
+        )
+        return 0
 
-
-def _s3_sync_up_boto3(s3, bucket: str, prefix: str, local_dir: Path) -> None:
-    for p in local_dir.rglob("*"):
-        if p.is_file():
-            rel = p.relative_to(ROOT).as_posix()
-            s3.upload_file(str(p), bucket, rel)
+    # push: upload files that are new or differ from what was pulled. Without a
+    # manifest (no pull in this working tree) everything is uploaded.
+    manifest = {}
+    if STATE_MANIFEST.exists():
+        manifest = json.loads(STATE_MANIFEST.read_text(encoding="utf-8"))
+    candidates = [ROOT / f for f in STATE_FILES if (ROOT / f).exists()]
+    for d in STATE_DIRS:
+        if (ROOT / d).is_dir():
+            candidates += [p for p in (ROOT / d).rglob("*") if p.is_file()]
+    uploaded = []
+    for p in candidates:
+        key = p.relative_to(ROOT).as_posix()
+        if manifest.get(key) == _md5(p):
+            continue
+        s3.upload_file(str(p), bucket, key)
+        uploaded.append(key)
+    sys.stderr.write(
+        f"runner state push (s3 via boto3): bucket={bucket} uploaded={len(uploaded)}"
+        f"{' (' + ', '.join(uploaded[:10]) + (' ...' if len(uploaded) > 10 else '') + ')' if uploaded else ''}\n"
+    )
+    return 0
 
 
 # ── Subcommand: secrets pull ────────────────────────────────────
@@ -537,10 +702,10 @@ def cmd_secrets(args: argparse.Namespace) -> int:
     prefix = os.environ.get("MAESTRO_SECRETS_PREFIX", "maestro/")
     names = args.names or [f"{prefix}mattermost"]
 
-    if have_aws_cli():
-        return _secrets_via_cli(names, args.shell)
     if have_boto3():
         return _secrets_via_boto3(names, args.shell)
+    if have_aws_cli():
+        return _secrets_via_cli(names, args.shell)
     sys.stderr.write("runner secrets: neither AWS CLI nor boto3 available.\n")
     return 2
 
@@ -549,7 +714,7 @@ def _secrets_via_cli(names: list[str], shell_format: bool) -> int:
     for name in names:
         r = shell_out(["aws", "secretsmanager", "get-secret-value",
                        "--secret-id", name, "--query", "SecretString",
-                       "--output", "text"])
+                       "--output", "text"], env=aws_cli_env())
         if r.returncode != 0:
             sys.stderr.write(f"runner secrets: failed to fetch {name}: {r.stderr.strip()}\n")
             continue
@@ -558,9 +723,7 @@ def _secrets_via_cli(names: list[str], shell_format: bool) -> int:
 
 
 def _secrets_via_boto3(names: list[str], shell_format: bool) -> int:
-    import boto3
-    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-    sm = boto3.client("secretsmanager", region_name=region)
+    sm = aws_client("secretsmanager")
     for name in names:
         try:
             resp = sm.get_secret_value(SecretId=name)
@@ -604,6 +767,7 @@ def cmd_auth(args: argparse.Namespace) -> int:
         out.append(f"State bucket:       {os.environ.get('MAESTRO_STATE_BUCKET', 'NOT SET')}")
         out.append(f"boto3 available:    {'yes' if have_boto3() else 'no'}")
         out.append(f"aws CLI available:  {'yes' if have_aws_cli() else 'no'}")
+        out.append(f"AWS credentials:    {'MAESTRO_AK/MAESTRO_SK' if _maestro_aws_creds() else 'default chain'}")
     out.append(f"config.json:        {'present' if CONFIG_FILE.exists() else 'MISSING'}")
     if CONFIG_FILE.exists():
         c = load_config()
@@ -634,6 +798,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--interval", type=int, default=60, help="Minutes between runs (catch-up detection)")
     sp.add_argument("--skip-memory", action="store_true")
 
+    sp = sub.add_parser("preflight", help="Check run window and AWS identity before a scheduled run")
+    sp.add_argument("--window", help="Inclusive local-hour window, e.g. 08-18; exit 10 outside it")
+    sp.add_argument("--tz", default="Europe/Vilnius", help="Time zone for --window")
+    sp.add_argument("--expect-identity", help="Required suffix of the AWS caller ARN, e.g. :user/maestro-routine")
+
+    sp = sub.add_parser("start", help="Record run-start in state.json")
+    sp.add_argument("run_type", choices=["heartbeat", "eod"])
+
     sp = sub.add_parser("finalize", help="Mark run-complete and update metrics")
     sp.add_argument("run_type", choices=["heartbeat", "eod"])
     sp.add_argument("--exit-code", type=int, default=0)
@@ -659,6 +831,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("state", help="Sync operational state to/from backend (s3 or local)")
     sp.add_argument("action", choices=["pull", "push"])
+    sp.add_argument("--daily-days", type=int, default=int(os.environ.get("MAESTRO_DAILY_DAYS", "14")),
+                    help="pull: only daily/YYYY-MM-DD.md from the last N days (0 = all). Default 14.")
 
     sp = sub.add_parser("secrets", help="Fetch maestro/* secrets from AWS Secrets Manager")
     sub_secrets = sp.add_subparsers(dest="secrets_cmd", required=True)
@@ -676,6 +850,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     dispatch = {
         "prepare": cmd_prepare,
+        "preflight": cmd_preflight,
+        "start": cmd_start,
         "finalize": cmd_finalize,
         "write": cmd_write,
         "mattermost": cmd_mattermost,
