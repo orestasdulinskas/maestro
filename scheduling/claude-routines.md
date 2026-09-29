@@ -8,7 +8,7 @@ Anthropic Remote Routines (`RemoteTrigger`) run Maestro on a cron schedule insid
 - A dedicated Anthropic cloud **environment** with AWS credentials in its env vars (see below). The runner uses these directly via `boto3` — no AWS MCP connector required.
 - S3 bucket for state (`maestro-state-<you>`) with versioning enabled.
 - AWS Secrets Manager entry `maestro/mattermost` with the Mattermost env vars as a JSON blob. Keys: bot creds (`MATTERMOST_BOT_TOKEN`, `MATTERMOST_BOT_USER_ID`, `MATTERMOST_CHANNEL_ID`, `MATTERMOST_BASE_URL`, etc.) plus the user's personal access token `MATTERMOST_TOKEN` for `lib/mattermost_inbox.py` to read the user's DMs/channels (distinct from the bot's writes).
-- Dedicated IAM user (e.g. `maestro-routine`) with a scoped policy: `secretsmanager:GetSecretValue` + `DescribeSecret` on `arn:aws:secretsmanager:*:*:secret:maestro/*`; `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject`/`s3:ListBucket` on the bucket. Programmatic access keys for this user go into the environment config.
+- Dedicated IAM user (e.g. `maestro-routine`) with a scoped policy: `secretsmanager:GetSecretValue` + `DescribeSecret` on `arn:aws:secretsmanager:*:*:secret:maestro/*`; `s3:GetObject`/`s3:PutObject`/`s3:ListBucket` on the bucket (the runner never deletes objects; with bucket versioning on, omitting `s3:DeleteObject` means a leaked key can't destroy state). Programmatic access keys for this user go into the environment config.
 
 ## Anthropic cloud environment setup
 
@@ -169,7 +169,7 @@ Once the environment + MCP connectors are attached at claude.ai, fire `RemoteTri
     "ccr": {
       "environment_id": "<your-env-id-from-claude.ai>",
       "session_context": {
-        "model": "claude-sonnet-4-6",
+        "model": "claude-opus-5-5",
         "sources": [
           {"git_repository": {"url": "https://github.com/<you>/maestro"}}
         ],
