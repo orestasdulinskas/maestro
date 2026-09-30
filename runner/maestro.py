@@ -228,7 +228,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         if not start_h <= local_now.hour <= end_h:
             sys.stdout.write(
                 f"preflight: SKIP - {local_now:%H:%M} {args.tz} is outside the "
-                f"{start_h:02d}:00-{end_h:02d}:59 window. Stop the run now.\n"
+                f"{start_h:02d}:00-{end_h:02d}:59 window. Stop the run now. This is expected: "
+                f"the UTC cron has one slot per DST offset, and the in-window slot is the real run.\n"
             )
             return PREFLIGHT_SKIP
         sys.stdout.write(f"preflight: window OK ({local_now:%a %H:%M} {args.tz}).\n")
