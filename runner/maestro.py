@@ -7,7 +7,9 @@ opencode, deep-agents, and Anthropic Remote Routines):
     prepare              Emit the Run Context block for the prompt (state + memory recall).
     finalize             Persist run-complete state and roll daily/weekly counters.
     write <path> <body>  Path-validated write; refuses protected paths.
-    mattermost           Deliver an urgent Mattermost line (cap-enforced).
+    mattermost           Deliver one Mattermost message (legacy/EOD teaser; cap-enforced).
+    ledger ...           Open-items ledger: list|add|done|snooze|touch|changed|acks (lib/ledger.py).
+    post                 Render the run's single Mattermost post from the ledger and deliver it.
     send-email           Stage an email payload; the runtime delivers it via its
                          gmail-send capability. Recipient is locked to config.json.
     preflight            Check the run window (local time) and the AWS identity.
@@ -404,7 +406,10 @@ def cmd_mattermost(args: argparse.Namespace) -> int:
     if not mattermost_py.exists():
         sys.stderr.write("runner mattermost: lib/mattermost.py missing; staged only.\n")
         return 0
-    result = shell_out([sys.executable, str(mattermost_py), "send-file", str(marker)])
+    # One invocation = ONE Mattermost post. `send -` posts stdin whole; the old
+    # `send-file` path split a multi-line message into one post per line, which
+    # is how a single finding turned into five channel messages.
+    result = shell_out([sys.executable, str(mattermost_py), "send", "-"], input=line)
     sys.stdout.write(result.stdout)
 
     # Always clear the marker after an inline-delivery attempt. On success,
@@ -421,6 +426,62 @@ def cmd_mattermost(args: argparse.Namespace) -> int:
     if result.returncode != 0:
         sys.stderr.write(result.stderr)
         return result.returncode
+    return 0
+
+
+# ── Subcommands: ledger, post ───────────────────────────────────
+
+
+def cmd_ledger(args: argparse.Namespace) -> int:
+    """Pass-through to lib/ledger.py (open-items ledger, acks, renderer)."""
+    ledger_py = LIB / "ledger.py"
+    if not ledger_py.exists():
+        sys.stderr.write("runner ledger: lib/ledger.py missing.\n")
+        return 2
+    return subprocess.call([sys.executable, str(ledger_py), *args.rest])
+
+
+def cmd_post(args: argparse.Namespace) -> int:
+    """Render this run's single Mattermost post from the ledger and deliver it.
+
+    Exit 10 (nothing to post) is the normal quiet-run outcome. The runner, not the
+    agent, decides the shape: the agent only feeds the ledger. Also appends a
+    `Mattermost sent:` line to today's daily log so the audit trail stays complete.
+    """
+    ledger_py = LIB / "ledger.py"
+    render_cmd = [sys.executable, str(ledger_py), "render", "--mode", args.mode]
+    if args.dry:
+        render_cmd.append("--dry")
+    r = shell_out(render_cmd)
+    sys.stderr.write(r.stderr)
+    if r.returncode == 10:
+        sys.stdout.write("post: nothing to post this run.\n")
+        return 10
+    if r.returncode != 0:
+        return r.returncode
+    text = r.stdout.rstrip("\n")
+    if args.dry or os.environ.get("MAESTRO_DRY_SEND") == "1":
+        sys.stdout.write("post: DRY - would post:\n" + text + "\n")
+        return 0
+    result = shell_out([sys.executable, str(LIB / "mattermost.py"), "send", "-"], input=text)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        TMP_DIR.mkdir(exist_ok=True)
+        (TMP_DIR / "post_unsent.md").write_text(text + "\n", encoding="utf-8")
+        sys.stderr.write("runner post: delivery failed; text kept in .tmp/post_unsent.md\n")
+        return result.returncode
+    post_id = result.stdout.strip()
+    local = datetime.now(timezone.utc).astimezone()
+    try:
+        from zoneinfo import ZoneInfo
+        local = datetime.now(ZoneInfo(os.environ.get("MAESTRO_TZ", "Europe/Vilnius")))
+    except Exception:
+        pass
+    daily = ROOT / "daily" / f"{local:%Y-%m-%d}.md"
+    daily.parent.mkdir(exist_ok=True)
+    with open(daily, "a", encoding="utf-8") as f:
+        f.write(f"\nMattermost sent: {local:%H:%M} post {post_id} ({len(text.splitlines())} lines)\n")
+    sys.stdout.write(f"post: delivered {post_id}\n{text}\n")
     return 0
 
 
@@ -825,6 +886,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--deliver", action="store_true",
                     help="(Deprecated; inline delivery is now the default) Kept for backward compatibility.")
 
+    sp = sub.add_parser("ledger", help="Open-items ledger: list|add|done|snooze|touch|changed|acks|render (see lib/ledger.py)")
+    sp.add_argument("rest", nargs=argparse.REMAINDER)
+
+    sp = sub.add_parser("post", help="Render the run's single Mattermost post from the ledger and deliver it")
+    sp.add_argument("--mode", default="auto", choices=["auto", "morning", "hourly", "eod"])
+    sp.add_argument("--dry", action="store_true", help="Print the post, deliver nothing, touch no bookkeeping")
+
     sp = sub.add_parser("send-email", help="Stage outgoing email with recipient locked from config.json")
     sp.add_argument("--subject", required=True)
     sp.add_argument("--body")
@@ -856,6 +924,8 @@ def main(argv: list[str] | None = None) -> int:
         "finalize": cmd_finalize,
         "write": cmd_write,
         "mattermost": cmd_mattermost,
+        "ledger": cmd_ledger,
+        "post": cmd_post,
         "send-email": cmd_send_email,
         "state": cmd_state,
         "auth": cmd_auth,

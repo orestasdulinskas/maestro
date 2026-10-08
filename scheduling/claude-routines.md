@@ -101,6 +101,10 @@ Constraints (AGENTS.md is authoritative; these are reminders):
   runner/, mcp/, providers/, scheduling/.
 ```
 
+### Heartbeat v2 (ledger, one post per run)
+
+A second routine, `maestro-heartbeat-v2`, runs the same cron with the prompt in `scheduling/heartbeat-v2-routine-prompt.txt` and the procedure in `prompts/heartbeat-v2.md`. It keeps an open-items ledger (`knowledge/ledger.json`, via `runner ledger ...`) and delivers exactly one post per run with `runner post` (exit 10 = quiet hour, nothing posted; 08:xx posts the full list, 18:xx the EOD shape). The user steers it with thread replies `done <id>`, `snooze <id> 2d`, `add <id> [title]`. v1 and v2 share the S3 state; run one of them at a time (pause the other with `enabled: false`) or the channel gets both feeds.
+
 ### End of day
 
 Same shape, EOD procedure, one run per weekday:
